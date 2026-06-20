@@ -8,12 +8,12 @@ export const STRIPE_CREDIT_PACKAGES = {
     productName: "1 Nailed credit",
     productDescription: "1 nail preview credit",
   },
-  triple: {
-    id: "triple",
-    credits: 3,
-    amountCents: 500,
-    productName: "3 Nailed credits",
-    productDescription: "3 nail preview credits",
+  five: {
+    id: "five",
+    credits: 5,
+    amountCents: 300,
+    productName: "5 Nailed credits",
+    productDescription: "5 nail preview credits",
   },
 } as const;
 

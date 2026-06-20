@@ -11,7 +11,7 @@
     },
     "packageId": {
       "type": "string",
-      "enum": ["single", "triple"]
+      "enum": ["single", "triple", "five"]
     },
     "credits": {
       "type": "number",
