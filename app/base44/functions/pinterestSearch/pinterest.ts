@@ -16,6 +16,23 @@ export type PinterestPin = {
   aspectRatio?: number;
 };
 
+type PinterestApiImage = {
+  url?: string;
+  width?: number;
+  height?: number;
+};
+
+type PinterestApiPin = {
+  id?: string;
+  node_id?: string;
+  title?: string;
+  description?: string;
+  images?: Record<string, PinterestApiImage | undefined>;
+  pin_join?: {
+    visual_annotation?: string[];
+  };
+};
+
 function decodeHtml(value: string) {
   return value
     .replace(/&(amp|quot|lt|gt|#x27|#39);/g, (entity) => HTML_ENTITY_MAP[entity] || entity)
@@ -43,6 +60,96 @@ function parseSrcSet(srcSet: string) {
     .map((part) => part.trim().split(/\s+/)[0])
     .filter(Boolean);
   return candidates.at(-1) || candidates[0] || "";
+}
+
+function getPinterestSetCookies(headers: Headers) {
+  const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+  if (typeof getSetCookie === "function") return getSetCookie.call(headers);
+
+  const combined = headers.get("set-cookie") || "";
+  if (!combined) return [];
+  return combined.split(/,(?=\s*[^=;,]+=[^;,]+)/g);
+}
+
+function cookieValue(cookieHeader: string, name: string) {
+  return cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${name}=`))
+    ?.slice(name.length + 1) || "";
+}
+
+function cookieHeaderFromSetCookies(setCookies: string[]) {
+  return setCookies
+    .map((cookie) => cookie.split(";")[0]?.trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+function mergeCookieHeaders(...headers: string[]) {
+  const cookies = new Map<string, string>();
+
+  for (const header of headers) {
+    for (const part of header.split(";")) {
+      const trimmed = part.trim();
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex <= 0) continue;
+      cookies.set(trimmed.slice(0, separatorIndex), trimmed.slice(separatorIndex + 1));
+    }
+  }
+
+  return Array.from(cookies.entries())
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
+}
+
+function bestImage(images: PinterestApiPin["images"]) {
+  if (!images) return null;
+  const preferred = ["736x", "564x", "474x", "345x", "236x", "originals"];
+  for (const key of preferred) {
+    const image = images[key];
+    if (image?.url) return image;
+  }
+  return Object.values(images).find((image) => image?.url) || null;
+}
+
+function preferLargePinImage(url: string) {
+  return url.replace("/236x/", "/736x/").replace("/474x/", "/736x/").replace("/564x/", "/736x/");
+}
+
+function decodeNodePinId(nodeId = "") {
+  try {
+    const decoded = atob(nodeId);
+    const match = decoded.match(/^Pin:(\d+)$/);
+    return match?.[1] || "";
+  } catch {
+    return "";
+  }
+}
+
+function apiTitle(pin: PinterestApiPin) {
+  const title = cleanTitle(pin.title || pin.description || "");
+  if (title) return title;
+  return cleanTitle(pin.pin_join?.visual_annotation?.[0] || "Pinterest pin");
+}
+
+function normalizePinterestApiPin(pin: PinterestApiPin): PinterestPin | null {
+  const id = pin.id || decodeNodePinId(pin.node_id);
+  const image = bestImage(pin.images);
+
+  if (!id || !image?.url) return null;
+
+  const width = Number(image.width);
+  const height = Number(image.height);
+  const aspectRatio = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0 ? height / width : undefined;
+
+  return {
+    id,
+    pinUrl: `https://www.pinterest.com/pin/${id}/`,
+    imageUrl: preferLargePinImage(image.url),
+    title: apiTitle(pin),
+    aspectRatio,
+  };
 }
 
 function extractPinFromChunk(chunk: string): PinterestPin | null {
@@ -89,6 +196,27 @@ export function parsePinterestSearchResults(html: string, limit = 24) {
   return results;
 }
 
+export function parsePinterestApiResults(data: unknown, limit = 24) {
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { resource_response?: { data?: unknown } })?.resource_response?.data)
+      ? (data as { resource_response: { data: unknown[] } }).resource_response.data
+      : [];
+
+  const results: PinterestPin[] = [];
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    const pin = normalizePinterestApiPin(row as PinterestApiPin);
+    if (!pin || seen.has(pin.id)) continue;
+    seen.add(pin.id);
+    results.push(pin);
+    if (results.length >= limit) break;
+  }
+
+  return results;
+}
+
 function cookieDomainMatches(domain: string, host: string) {
   const normalized = domain.replace(/^\./, "").toLowerCase();
   return host === normalized || host.endsWith(`.${normalized}`);
@@ -125,6 +253,36 @@ export async function getPinterestCookieHeader(host = "www.pinterest.com") {
   }
 
   return cookies.join("; ");
+}
+
+export async function getPinterestSession(host = "www.pinterest.com") {
+  const configuredCookieHeader = await getPinterestCookieHeader(host);
+  const configuredCsrfToken = cookieValue(configuredCookieHeader, "csrftoken");
+
+  if (configuredCookieHeader && configuredCsrfToken) {
+    return {
+      cookieHeader: configuredCookieHeader,
+      csrfToken: configuredCsrfToken,
+    };
+  }
+
+  const homeResponse = await fetch(`https://${host}/`, {
+    headers: pinterestHeaders({
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      ...(configuredCookieHeader ? { cookie: configuredCookieHeader } : {}),
+    }),
+    redirect: "follow",
+  });
+
+  const cookieHeader = mergeCookieHeaders(
+    configuredCookieHeader,
+    cookieHeaderFromSetCookies(getPinterestSetCookies(homeResponse.headers)),
+  );
+
+  return {
+    cookieHeader,
+    csrfToken: cookieValue(cookieHeader, "csrftoken"),
+  };
 }
 
 export function pinterestHeaders(extra: HeadersInit = {}) {

@@ -1,0 +1,115 @@
+{
+  "name": "GeneratedPreview",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "string"
+    },
+    "userEmail": {
+      "type": "string",
+      "format": "email"
+    },
+    "generationId": {
+      "type": "string"
+    },
+    "targetUploadId": {
+      "type": "string"
+    },
+    "targetSlot": {
+      "type": "string",
+      "enum": ["hand", "chest", "face"],
+      "default": "hand"
+    },
+    "inspoUploadId": {
+      "type": "string"
+    },
+    "attemptIndex": {
+      "type": "number",
+      "minimum": 1
+    },
+    "imageIndex": {
+      "type": "number",
+      "minimum": 1
+    },
+    "model": {
+      "type": "string"
+    },
+    "storageProvider": {
+      "type": "string",
+      "enum": ["cloudinary"],
+      "default": "cloudinary"
+    },
+    "fileUri": {
+      "type": "string"
+    },
+    "cloudinaryPublicId": {
+      "type": "string"
+    },
+    "cloudinarySecureUrl": {
+      "type": "string"
+    },
+    "cloudinaryVersion": {
+      "type": "number"
+    },
+    "cloudinaryResourceType": {
+      "type": "string",
+      "default": "image"
+    },
+    "cloudinaryFormat": {
+      "type": "string"
+    },
+    "fileName": {
+      "type": "string"
+    },
+    "mimeType": {
+      "type": "string"
+    },
+    "sizeBytes": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "userId",
+    "userEmail",
+    "generationId",
+    "targetUploadId",
+    "targetSlot",
+    "inspoUploadId",
+    "attemptIndex",
+    "imageIndex",
+    "model",
+    "storageProvider",
+    "cloudinaryPublicId",
+    "cloudinarySecureUrl"
+  ],
+  "rls": {
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": {
+      "$or": [
+        {
+          "userEmail": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

@@ -2,6 +2,10 @@
   box-sizing: border-box;
 }
 
+:root {
+  --tab-bar-height: 78px;
+}
+
 html,
 body,
 #root {
@@ -113,7 +117,7 @@ button:disabled {
 }
 
 .tabs-space {
-  padding-bottom: 96px;
+  padding-bottom: calc(170px + env(safe-area-inset-bottom));
 }
 
 .fixed-action-space {
@@ -968,7 +972,37 @@ button:disabled {
   padding: 0;
 }
 
-.recent-card .pattern {
+.recent-thumb {
+  height: 160px;
+  border-radius: 18px;
+  border: 1px solid #f2e2e8;
+  display: block;
+  overflow: hidden;
+  position: relative;
+  background: #f8edf2;
+}
+
+.recent-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.recent-thumb em {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  background: rgba(255, 255, 255, .92);
+  color: #c75c80;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  padding: 5px 9px;
+  border-radius: 10px;
+}
+
+.gallery-grid .pattern {
   height: 160px;
   border-radius: 18px;
   border: 1px solid #f2e2e8;
@@ -977,7 +1011,6 @@ button:disabled {
   padding: 10px;
 }
 
-.recent-card .pattern span,
 .gallery-grid .pattern span {
   background: rgba(255, 255, 255, .92);
   font-size: 11px;
@@ -997,6 +1030,24 @@ button:disabled {
 .recent-card small {
   color: #9b8189;
   font-size: 11px;
+}
+
+.recent-empty {
+  margin-top: 14px;
+  width: 100%;
+  border: 1px solid #f2e2e8;
+  background: #fff;
+  color: #9b8189;
+  border-radius: 18px;
+  padding: 18px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.recent-empty-action {
+  cursor: pointer;
+  color: #3a2932;
 }
 
 .back-line {
@@ -1223,6 +1274,11 @@ button:disabled {
   height: 18px;
 }
 
+.upload-disable-action {
+  color: #8c737e;
+  background: #fff8fa;
+}
+
 .tip-card {
   margin-top: 16px;
   background: #f3e8f7;
@@ -1434,6 +1490,98 @@ button:disabled {
   font-style: normal;
 }
 
+.moodboard-row.active {
+  border-color: #e6c6d4;
+  background: #fff8fa;
+}
+
+.moodboard-picker {
+  margin-top: 10px;
+  border: 1px solid #f2e2e8;
+  background: #fff;
+  border-radius: 18px;
+  padding: 12px;
+  max-height: min(430px, 52vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.moodboard-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.moodboard-picker-head b {
+  color: #3a2932;
+  font-size: 13px;
+}
+
+.moodboard-picker-head button {
+  color: #c75c80;
+  background: #fce9ef;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 10px;
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.moodboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.moodboard-pin {
+  min-width: 0;
+  background: #fff8fa;
+  border: 1px solid #f2e2e8;
+  border-radius: 14px;
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+}
+
+.moodboard-pin img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  display: block;
+}
+
+.moodboard-pin span {
+  display: block;
+  padding: 9px;
+}
+
+.moodboard-pin b,
+.moodboard-pin small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.moodboard-pin b {
+  color: #3a2932;
+  font-size: 10.5px;
+}
+
+.moodboard-pin small {
+  color: #c75c80;
+  font-size: 10px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+.moodboard-pin:disabled {
+  opacity: .7;
+  cursor: default;
+}
+
 .search-title {
   font-family: 'DM Serif Display', serif;
   font-size: 24px;
@@ -1568,6 +1716,12 @@ button:disabled {
   position: relative;
   padding: 0;
   background: transparent;
+}
+
+.pin-media-button {
+  width: 100%;
+  padding: 0;
+  background: transparent;
   cursor: pointer;
 }
 
@@ -1655,6 +1809,7 @@ button:disabled {
   font-size: 14px;
   color: #d9a6bc;
   box-shadow: 0 4px 10px -4px rgba(0, 0, 0, .3);
+  cursor: pointer;
 }
 
 .heart.saved {
@@ -1676,10 +1831,11 @@ button:disabled {
 }
 
 .saved-bar {
-  position: absolute;
-  bottom: 78px;
-  left: 14px;
-  right: 14px;
+  position: fixed;
+  bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom) + 10px);
+  left: 50%;
+  width: min(402px, calc(100vw - 28px));
+  transform: translateX(-50%);
   background: #3a2932;
   border-radius: 18px;
   padding: 12px 16px;
@@ -1687,6 +1843,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   box-shadow: 0 16px 30px -16px rgba(0, 0, 0, .5);
+  z-index: 30;
 }
 
 .saved-bar b {
@@ -2333,7 +2490,7 @@ button:disabled {
 
 .tab-bar {
   flex: none;
-  height: calc(78px + env(safe-area-inset-bottom));
+  height: calc(var(--tab-bar-height) + env(safe-area-inset-bottom));
   background: rgba(255, 248, 250, .95);
   backdrop-filter: blur(12px);
   border-top: 1px solid #f2e2e8;

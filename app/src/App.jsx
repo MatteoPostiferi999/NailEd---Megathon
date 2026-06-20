@@ -15,10 +15,11 @@ const greetings = [
   ['it girl alert', 'manifest the mani'],
 ];
 
-const recent = [
-  { t: 'Coral chrome', d: '6 angles', tag: 'Replica', c1: '#FCE9EF', c2: '#F3C9DA' },
-  { t: 'Lilac french', d: '6 angles', tag: 'Concept', c1: '#F3E8F7', c2: '#DFC6EE' },
-  { t: 'Peach glaze', d: '6 angles', tag: 'Replica', c1: '#FDEFE6', c2: '#F6D2B8' },
+const galleryItems = [
+  { t: 'Coral chrome', tag: 'Replica', c1: '#FCE9EF', c2: '#F3C9DA' },
+  { t: 'Lilac french', tag: 'Concept', c1: '#F3E8F7', c2: '#DFC6EE' },
+  { t: 'Peach glaze', tag: 'Replica', c1: '#FDEFE6', c2: '#F6D2B8' },
+  { t: 'Cool milk', tag: 'Concept', c1: '#EFEFF8', c2: '#CFD0EC' },
 ];
 
 const shotDefs = [
@@ -32,6 +33,7 @@ const shotDefs = [
 
 const pendingWaitlistOptInKey = 'nailed_pending_waitlist_opt_in';
 const pendingPromoCodeKey = 'nailed_pending_promo_code';
+const moodboardStorageKey = 'nailed_pinterest_moodboard';
 const physicalOutreachPromoCode = 'irl';
 const maxImageUploadBytes = 50 * 1024 * 1024;
 const uploadSlots = ['hand', 'chest', 'face'];
@@ -64,6 +66,17 @@ const normalizeCredits = (value) => {
   return Number.isFinite(credits) && credits > 0 ? Math.floor(credits) : 0;
 };
 
+const loadSavedMoodboard = () => {
+  if (typeof window === 'undefined') return {};
+
+  try {
+    const savedMoodboard = JSON.parse(window.localStorage?.getItem(moodboardStorageKey) || '{}');
+    return savedMoodboard && typeof savedMoodboard === 'object' ? savedMoodboard : {};
+  } catch {
+    return {};
+  }
+};
+
 const getPromoCodeFromUrl = (url) => {
   return shouldGrantPhysicalOutreachCredits(url) ? physicalOutreachPromoCode : '';
 };
@@ -92,7 +105,100 @@ const imageExtensionFromUrl = (imageUrl = '') => {
   return '';
 };
 
-const getResultImageUrl = (preview = {}) => preview.cloudinarySecureUrl || preview.secureUrl || preview.signedUrl || preview.imageUrl || '';
+const getResultImageUrl = (preview = {}) =>
+  preview.cloudinarySecureUrl ||
+  preview.cloudinary_secure_url ||
+  preview.secureUrl ||
+  preview.secure_url ||
+  preview.signedUrl ||
+  preview.signed_url ||
+  preview.imageUrl ||
+  '';
+
+const normalizeGeneratedPreviewRecord = (record = {}) => ({
+  ...record,
+  generationId: record.generationId || record.generation_id || record.id,
+  targetUploadId: record.targetUploadId || record.target_upload_id,
+  targetSlot: record.targetSlot || record.target_slot || 'hand',
+  inspoUploadId: record.inspoUploadId || record.inspo_upload_id,
+  attemptIndex: Number(record.attemptIndex || record.attempt_index || 1),
+  imageIndex: Number(record.imageIndex || record.image_index || 1),
+  storageProvider: record.storageProvider || record.storage_provider,
+  cloudinaryPublicId: record.cloudinaryPublicId || record.cloudinary_public_id,
+  cloudinarySecureUrl: record.cloudinarySecureUrl || record.cloudinary_secure_url,
+  cloudinaryVersion: record.cloudinaryVersion || record.cloudinary_version,
+  cloudinaryResourceType: record.cloudinaryResourceType || record.cloudinary_resource_type,
+  cloudinaryFormat: record.cloudinaryFormat || record.cloudinary_format,
+  mimeType: record.mimeType || record.mime_type || record.contentType || record.content_type,
+  sizeBytes: record.sizeBytes || record.size_bytes || 0,
+  createdDate: record.created_date || record.createdAt || record.created_at || new Date().toISOString(),
+});
+
+const sortGeneratedPreviews = (left, right) => {
+  const slotOrder = { hand: 0, chest: 1, face: 2 };
+  return (
+    (slotOrder[left.targetSlot] ?? 99) - (slotOrder[right.targetSlot] ?? 99) ||
+    left.attemptIndex - right.attemptIndex ||
+    left.imageIndex - right.imageIndex
+  );
+};
+
+const formatTryOnDate = (value) => {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'Recent try-on';
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+};
+
+const groupGeneratedPreviews = (records = []) => {
+  const groupsById = new Map();
+
+  records.map(normalizeGeneratedPreviewRecord).forEach((record) => {
+    const imageUrl = getResultImageUrl(record);
+    if (!imageUrl) return;
+
+    const generationId = record.generationId || record.id;
+    const group = groupsById.get(generationId) || {
+      id: generationId,
+      createdDate: record.createdDate,
+      previews: [],
+    };
+
+    group.createdDate = group.createdDate || record.createdDate;
+    group.previews.push({ ...record, imageUrl });
+    groupsById.set(generationId, group);
+  });
+
+  return Array.from(groupsById.values())
+    .map((group, index) => {
+      const previews = [...group.previews].sort(sortGeneratedPreviews);
+      const latestTime = Math.max(
+        ...previews.map((preview) => new Date(preview.createdDate || group.createdDate || 0).getTime()).filter(Number.isFinite),
+        0
+      );
+
+      return {
+        ...group,
+        previews,
+        coverUrl: previews[0]?.imageUrl || '',
+        title: `Try-on ${index + 1}`,
+        subtitle: `${previews.length} ${previews.length === 1 ? 'preview' : 'previews'}`,
+        dateLabel: formatTryOnDate(group.createdDate),
+        latestTime,
+      };
+    })
+    .sort((left, right) => right.latestTime - left.latestTime);
+};
+
+const mergeTryOnGroups = (incomingGroups, existingGroups) => {
+  const merged = new Map();
+  [...incomingGroups, ...existingGroups].forEach((group) => {
+    if (group?.id && !merged.has(group.id)) merged.set(group.id, group);
+  });
+
+  return Array.from(merged.values())
+    .sort((left, right) => right.latestTime - left.latestTime)
+    .slice(0, 12);
+};
 
 const buildResultItems = (generatedPreviews) =>
   generatedPreviews.length
@@ -101,6 +207,8 @@ const buildResultItems = (generatedPreviews) =>
         imageUrl: getResultImageUrl(preview),
         mimeType: preview.mimeType || preview.contentType || '',
         format: preview.cloudinaryFormat || preview.format || '',
+        fileName: preview.fileName,
+        generationId: preview.generationId,
         c1: '#FCE9EF',
         c2: '#F3C9DA',
       }))
@@ -124,6 +232,25 @@ const resultFileExtension = (item) => {
 
 const resultFileName = (item, index) => `nailed-preview-${index + 1}.${resultFileExtension(item)}`;
 
+const cloudinaryAttachmentUrl = (imageUrl, fileName) => {
+  try {
+    const url = new URL(imageUrl, window.location.href);
+    if (!url.hostname.includes('cloudinary.com') || !url.pathname.includes('/image/upload/')) return '';
+
+    const attachmentName =
+      String(fileName || 'nailed-preview')
+        .replace(/\.[^.]+$/, '')
+        .replace(/[^a-z0-9_-]+/gi, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'nailed-preview';
+
+    url.pathname = url.pathname.replace('/image/upload/', `/image/upload/fl_attachment:${attachmentName}/`);
+    return url.toString();
+  } catch {
+    return '';
+  }
+};
+
 const triggerBrowserDownload = (href, fileName, { openInNewTab = false } = {}) => {
   const link = document.createElement('a');
   link.href = href;
@@ -139,22 +266,24 @@ const triggerBrowserDownload = (href, fileName, { openInNewTab = false } = {}) =
   link.remove();
 };
 
-const downloadResultImage = async (item, index) => {
+const downloadResultImage = (item, index) => {
   const fileName = resultFileName(item, index);
+  const attachmentUrl = cloudinaryAttachmentUrl(item.imageUrl, fileName);
 
-  try {
-    const response = await fetch(item.imageUrl, { mode: 'cors' });
-    if (!response.ok) throw new Error('Image download failed');
-
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    triggerBrowserDownload(blobUrl, fileName);
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  if (attachmentUrl) {
+    triggerBrowserDownload(attachmentUrl, fileName);
     return 'downloaded';
-  } catch (error) {
-    console.warn('Falling back to opening image URL', error);
-    triggerBrowserDownload(item.imageUrl, fileName, { openInNewTab: true });
-    return 'opened';
+  }
+
+  triggerBrowserDownload(item.imageUrl, fileName, { openInNewTab: true });
+  return 'opened';
+};
+
+const cleanShareUrl = (value) => {
+  try {
+    return new URL(value || window.location.href, window.location.href).toString();
+  } catch {
+    return window.location.href;
   }
 };
 
@@ -187,6 +316,7 @@ const normalizeUploadRecord = (record = {}) => ({
   cloudinaryResourceType: record.cloudinaryResourceType || record.cloudinary_resource_type,
   cloudinaryFormat: record.cloudinaryFormat || record.cloudinary_format,
   contentType: record.contentType || record.content_type,
+  isEnabled: record.isEnabled ?? record.is_enabled ?? true,
 });
 
 const createStoredImageUpload = (record, fallbackUrl) => {
@@ -204,6 +334,7 @@ const createStoredImageUpload = (record, fallbackUrl) => {
     cloudinaryVersion: normalizedRecord.cloudinaryVersion,
     cloudinaryResourceType: normalizedRecord.cloudinaryResourceType,
     cloudinaryFormat: normalizedRecord.cloudinaryFormat,
+    isEnabled: normalizedRecord.isEnabled,
     status: 'saved',
     saved: true,
   };
@@ -270,7 +401,7 @@ function App() {
   const [inspLoaded, setInspLoaded] = useState(null);
   const [query, setQuery] = useState('chrome');
   const [resultLabel, setResultLabel] = useState('chrome nails');
-  const [saved, setSaved] = useState({});
+  const [saved, setSaved] = useState(loadSavedMoodboard);
   const [pinterestResults, setPinterestResults] = useState([]);
   const [pinterestLoading, setPinterestLoading] = useState(false);
   const [pinterestError, setPinterestError] = useState('');
@@ -279,10 +410,12 @@ function App() {
   const [selectedPkg, setSelectedPkg] = useState(defaultStripeCreditPackageId);
   const [gallery, setGallery] = useState(0);
   const [generatedPreviews, setGeneratedPreviews] = useState([]);
+  const [recentTryOns, setRecentTryOns] = useState([]);
   const [toast, setToast] = useState('');
   const [toastShown, setToastShown] = useState(false);
   const [waitlistPending, setWaitlistPending] = useState(false);
   const [savedUploadsLoading, setSavedUploadsLoading] = useState(false);
+  const [recentTryOnsLoading, setRecentTryOnsLoading] = useState(false);
   const [generationPending, setGenerationPending] = useState(false);
   const [progress, setProgress] = useState(0);
   const dragStartRef = useRef(null);
@@ -292,6 +425,10 @@ function App() {
   const greetIdx = useMemo(() => Math.floor(Math.random() * greetings.length), []);
   const resultItems = useMemo(() => buildResultItems(generatedPreviews), [generatedPreviews]);
   const savedCount = Object.keys(saved).length;
+  const savedMoodboardPins = useMemo(
+    () => Object.values(saved).filter((item) => item && typeof item === 'object' && item.imageUrl),
+    [saved]
+  );
   const showTabs = ['home', 'search', 'account'].includes(screen);
   const resultCount = resultItems.length;
 
@@ -417,10 +554,14 @@ function App() {
       try {
         const records = await base44.entities.UserUpload.filter({}, '-created_date', 60);
         const latestBySlot = {};
+        const seenSlots = new Set();
 
         records.forEach((record) => {
           const normalizedRecord = normalizeUploadRecord(record);
-          if (!(normalizedRecord.cloudinarySecureUrl || normalizedRecord.fileUri) || latestBySlot[normalizedRecord.slot]) return;
+          if (seenSlots.has(normalizedRecord.slot)) return;
+          seenSlots.add(normalizedRecord.slot);
+          if (normalizedRecord.isEnabled === false && normalizedRecord.slot !== 'hand') return;
+          if (!(normalizedRecord.cloudinarySecureUrl || normalizedRecord.fileUri)) return;
           latestBySlot[normalizedRecord.slot] = normalizedRecord;
         });
 
@@ -473,6 +614,33 @@ function App() {
   }, [currentUser]);
 
   useEffect(() => {
+    if (!currentUser) {
+      setRecentTryOns([]);
+      setRecentTryOnsLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadRecentTryOns = async () => {
+      setRecentTryOnsLoading(true);
+      try {
+        const records = await base44.entities.GeneratedPreview.filter({}, '-created_date', 90);
+        if (!cancelled) setRecentTryOns(groupGeneratedPreviews(records));
+      } catch (error) {
+        console.warn('Could not load generated previews', error);
+        if (!cancelled) setRecentTryOns([]);
+      } finally {
+        if (!cancelled) setRecentTryOnsLoading(false);
+      }
+    };
+
+    loadRecentTryOns();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
     if (screen !== 'generating') return undefined;
     let current = 0;
     setProgress(0);
@@ -490,6 +658,10 @@ function App() {
     setAuthOtp('');
     setPendingAuthEmail('');
   }, [authMode]);
+
+  useEffect(() => {
+    window.localStorage?.setItem(moodboardStorageKey, JSON.stringify(saved));
+  }, [saved]);
 
   useEffect(() => {
     if (screen !== 'search' || pinterestLoading) return;
@@ -724,6 +896,8 @@ function App() {
       }
 
       setGeneratedPreviews(previews);
+      setRecentTryOns((value) => mergeTryOnGroups(groupGeneratedPreviews(previews), value));
+      setSavedShots(Object.fromEntries(previews.map((_, index) => [index, true])));
       setGallery(0);
       setProgress(100);
       if (data?.user) setCurrentUser(data.user);
@@ -758,6 +932,22 @@ function App() {
     });
   };
 
+  const openMoodboardGeneration = () => {
+    if (!savedMoodboardPins.length) {
+      setScreen('search');
+      showToast('Save one inspiration first');
+      return;
+    }
+
+    if (!uploads.hand?.id || uploads.hand.status === 'saving') {
+      setScreen('upload');
+      showToast('Add your hand photo first');
+      return;
+    }
+
+    setScreen('inspiration');
+  };
+
   const runPinterestSearch = async (nextQuery = query) => {
     const trimmedQuery = String(nextQuery || '').trim();
 
@@ -790,12 +980,12 @@ function App() {
     if (!currentUser) {
       setScreen('auth');
       showToast('Log in to use Pinterest inspo');
-      return;
+      return false;
     }
 
     if (!pin?.imageUrl) {
       showToast('This Pinterest image is missing');
-      return;
+      return false;
     }
 
     setPinterestImportingId(pin.id);
@@ -820,9 +1010,11 @@ function App() {
 
       showToast('Pinterest inspo added');
       setScreen('inspiration');
+      return true;
     } catch (error) {
       console.error('Could not import Pinterest image', error);
       showToast(extractErrorMessage(error, 'Could not use this Pinterest image'));
+      return false;
     } finally {
       setPinterestImportingId('');
     }
@@ -884,7 +1076,7 @@ function App() {
       else next[index] = true;
       return next;
     });
-    showToast(wasSaved ? 'Removed from gallery' : 'Image saved to gallery ♥');
+    showToast(wasSaved ? 'Removed from gallery' : 'Image saved to gallery');
   };
 
   const saveAllShots = () => {
@@ -894,10 +1086,22 @@ function App() {
     }
 
     setSavedShots(Object.fromEntries(resultItems.map((_, index) => [index, true])));
-    showToast('All previews saved to gallery ♥');
+    showToast('All previews saved to gallery');
   };
 
-  const downloadShot = async (index = gallery) => {
+  const openRecentTryOn = (tryOn) => {
+    if (!tryOn?.previews?.length) {
+      showToast('No saved previews yet');
+      return;
+    }
+
+    setGeneratedPreviews(tryOn.previews);
+    setSavedShots(Object.fromEntries(tryOn.previews.map((_, index) => [index, true])));
+    setGallery(0);
+    setScreen('results');
+  };
+
+  const downloadShot = (index = gallery) => {
     const item = resultItems[index] || resultItems[gallery] || resultItems[0];
 
     if (!item?.imageUrl) {
@@ -905,28 +1109,29 @@ function App() {
       return;
     }
 
-    const result = await downloadResultImage(item, index);
+    const result = downloadResultImage(item, index);
     showToast(result === 'opened' ? 'Opened image to save' : 'Preview downloaded');
   };
 
   const shareLook = async () => {
     const item = resultItems[gallery] || resultItems[0];
-    const shareUrl = item?.imageUrl || window.location.href;
+    const shareUrl = cleanShareUrl(item?.imageUrl);
+    const shareText = 'Check out this nail preview from Nailed.';
     const shareData = {
       title: 'My Nailed preview',
-      text: 'Check out this nail preview from Nailed.',
       url: shareUrl,
     };
+    const clipboardText = `${shareText}\n${shareUrl}`;
 
     try {
-      if (navigator.share) {
+      if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
         await navigator.share(shareData);
         showToast('Shared your look');
         return;
       }
 
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl);
+        await navigator.clipboard.writeText(clipboardText);
         showToast('Share link copied');
         return;
       }
@@ -938,10 +1143,11 @@ function App() {
       console.error('Could not share look', error);
       try {
         if (!navigator.clipboard?.writeText) throw new Error('Clipboard is not supported');
-        await navigator.clipboard.writeText(shareUrl);
+        await navigator.clipboard.writeText(clipboardText);
         showToast('Share link copied');
       } catch {
-        showToast('Could not share yet');
+        window.prompt('Copy this link', clipboardText);
+        showToast('Copy the link shown');
       }
     }
   };
@@ -1048,6 +1254,7 @@ function App() {
       fileName: file.name || (source === 'camera' ? 'Camera photo' : 'Gallery photo'),
       contentType: file.type || 'image/jpeg',
       sizeBytes: file.size || 0,
+      isEnabled: true,
     };
 
     return existingId
@@ -1093,6 +1300,7 @@ function App() {
             cloudinaryVersion: savedRecord.cloudinaryVersion,
             cloudinaryResourceType: savedRecord.cloudinaryResourceType,
             cloudinaryFormat: savedRecord.cloudinaryFormat,
+            isEnabled: savedRecord.isEnabled,
             status: 'saved',
             saved: true,
           },
@@ -1113,6 +1321,35 @@ function App() {
         };
       });
       showToast('Could not save upload');
+    }
+  };
+
+  const disableUploadSlot = async (slot) => {
+    if (slot === 'hand') {
+      showToast('Open hand is required');
+      return;
+    }
+
+    const upload = uploadsRef.current[slot];
+    if (!upload) return;
+
+    setUploads((value) => {
+      revokeImageUpload(value[slot]);
+      return { ...value, [slot]: null };
+    });
+
+    if (!upload.id) {
+      showToast('Optional angle disabled');
+      return;
+    }
+
+    try {
+      await base44.entities.UserUpload.update(upload.id, { isEnabled: false });
+      showToast('Optional angle disabled');
+    } catch (error) {
+      console.error('Could not disable upload', error);
+      setUploads((value) => ({ ...value, [slot]: upload }));
+      showToast('Could not disable angle');
     }
   };
 
@@ -1196,6 +1433,7 @@ function App() {
     uploads,
     setUploads,
     saveUploadFile,
+    disableUploadSlot,
     waitlistOptIn,
     setWaitlistOptIn,
     joinedWaitlist,
@@ -1209,6 +1447,7 @@ function App() {
     setResultLabel,
     saved,
     savedCount,
+    savedMoodboardPins,
     pinterestResults,
     pinterestLoading,
     pinterestError,
@@ -1219,9 +1458,11 @@ function App() {
     setGallery,
     generatedPreviews,
     resultItems,
+    recentTryOns,
     generationPending,
     waitlistPending,
     savedUploadsLoading,
+    recentTryOnsLoading,
     progress,
     greet: greetings[greetIdx],
     handleEmailAuth,
@@ -1235,10 +1476,12 @@ function App() {
     joinWaitlist,
     startGeneration,
     toggleSave,
+    openMoodboardGeneration,
     runPinterestSearch,
     usePinterestPin,
     saveShot,
     saveAllShots,
+    openRecentTryOn,
     downloadShot,
     shareLook,
     startCreditCheckout,
@@ -1465,7 +1708,17 @@ function Divider({ children }) {
   );
 }
 
-function HomeScreen({ credits, greet, joinedWaitlist, joinWaitlist, waitlistPending, setScreen }) {
+function HomeScreen({
+  credits,
+  greet,
+  joinedWaitlist,
+  joinWaitlist,
+  waitlistPending,
+  recentTryOns,
+  recentTryOnsLoading,
+  openRecentTryOn,
+  setScreen,
+}) {
   return (
     <section className="screen scroll tabs-space">
       <div className="home-pad rise">
@@ -1534,23 +1787,32 @@ function HomeScreen({ credits, greet, joinedWaitlist, joinWaitlist, waitlistPend
         <div className="section-title-row">
           <h2>Your recent try-ons</h2>
         </div>
-        <div className="recent-row">
-          {recent.map((item) => (
-            <button key={item.t} className="recent-card" onClick={() => setScreen('results')}>
-              <Pattern c1={item.c1} c2={item.c2}>
-                <span>{item.tag}</span>
-              </Pattern>
-              <b>{item.t}</b>
-              <small>{item.d}</small>
-            </button>
-          ))}
-        </div>
+        {recentTryOnsLoading ? (
+          <div className="recent-empty">Loading saved try-ons...</div>
+        ) : recentTryOns.length ? (
+          <div className="recent-row">
+            {recentTryOns.map((item) => (
+              <button key={item.id} className="recent-card" onClick={() => openRecentTryOn(item)}>
+                <span className="recent-thumb">
+                  <img src={item.coverUrl} alt="" />
+                  <em>{item.subtitle}</em>
+                </span>
+                <b>{item.title}</b>
+                <small>{item.dateLabel}</small>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button className="recent-empty recent-empty-action" onClick={() => setScreen('upload')}>
+            No saved try-ons yet. Create your first one.
+          </button>
+        )}
       </div>
     </section>
   );
 }
 
-function UploadScreen({ uploads, saveUploadFile, savedUploadsLoading, setScreen }) {
+function UploadScreen({ uploads, saveUploadFile, disableUploadSlot, savedUploadsLoading, setScreen }) {
   const galleryInputRefs = useRef({});
   const slots = [
     { k: 'hand', t: 'Open hand', d: 'Flat, well-lit shot of your hand', required: true },
@@ -1633,6 +1895,17 @@ function UploadScreen({ uploads, saveUploadFile, savedUploadsLoading, setScreen 
                   )}
                 </span>
                 <span className="upload-actions" onClick={(event) => event.stopPropagation()}>
+                  {!slot.required && done && upload.status !== 'saving' && (
+                    <button
+                      type="button"
+                      className="upload-action upload-disable-action"
+                      aria-label={`Disable ${slot.t}`}
+                      title="Disable"
+                      onClick={() => disableUploadSlot(slot.k)}
+                    >
+                      <XIcon />
+                    </button>
+                  )}
                   <label className="upload-action" aria-label={`${slot.t} from camera`} title="Camera">
                     <CameraIcon />
                     <input
@@ -1697,6 +1970,15 @@ function GalleryIcon() {
   );
 }
 
+function XIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 6l12 12" />
+      <path d="M18 6 6 18" />
+    </svg>
+  );
+}
+
 function ProgressSteps({ active }) {
   return (
     <div className="progress-steps">
@@ -1706,11 +1988,26 @@ function ProgressSteps({ active }) {
   );
 }
 
-function InspirationScreen({ inspLoaded, saveInspoFile, savedCount, setScreen, startGeneration }) {
+function InspirationScreen({
+  inspLoaded,
+  saveInspoFile,
+  savedCount,
+  savedMoodboardPins,
+  pinterestImportingId,
+  usePinterestPin,
+  setScreen,
+  startGeneration,
+}) {
+  const [showMoodboard, setShowMoodboard] = useState(false);
+  const hasMoodboardPins = savedMoodboardPins.length > 0;
   const handleFile = (event, source) => {
     const file = event.target.files?.[0];
     saveInspoFile(file, source);
     event.target.value = '';
+  };
+  const chooseMoodboardPin = async (pin) => {
+    const didSelect = await usePinterestPin(pin);
+    if (didSelect) setShowMoodboard(false);
   };
 
   return (
@@ -1773,20 +2070,58 @@ function InspirationScreen({ inspLoaded, saveInspoFile, savedCount, setScreen, s
 
         <Divider>or pick a saved one</Divider>
 
-        <button className="moodboard-row" onClick={() => setScreen('search')}>
+        <button
+          className={`moodboard-row ${showMoodboard ? 'active' : ''}`}
+          onClick={() => {
+            if (hasMoodboardPins) setShowMoodboard((value) => !value);
+            else setScreen('search');
+          }}
+        >
           <span>♥</span>
           <span>
             <b>From your moodboard</b>
             <small>{savedCount} saved ideas</small>
           </span>
-          <em>›</em>
+          <em>{showMoodboard ? '⌃' : '›'}</em>
         </button>
+
+        {showMoodboard && hasMoodboardPins && (
+          <div className="moodboard-picker">
+            <div className="moodboard-picker-head">
+              <b>Pick one inspo</b>
+              <button type="button" onClick={() => setScreen('search')}>
+                Explore more
+              </button>
+            </div>
+            <div className="moodboard-grid">
+              {savedMoodboardPins.map((pin) => {
+                const isImporting = pinterestImportingId === pin.id;
+                return (
+                  <button
+                    key={pin.id}
+                    className="moodboard-pin"
+                    disabled={isImporting}
+                    onClick={() => chooseMoodboardPin(pin)}
+                  >
+                    <img src={pin.imageUrl} alt="" />
+                    <span>
+                      <b>{pin.title}</b>
+                      <small>{isImporting ? 'Adding...' : 'Use this inspo'}</small>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
-      <FixedAction>
-        <button className="pink-wide-button" onClick={startGeneration}>
-          ✨ Generate the look · 1 credit
-        </button>
-      </FixedAction>
+      {!showMoodboard && (
+        <FixedAction>
+          <button className="pink-wide-button" onClick={startGeneration}>
+            Generate the look · 1 credit
+          </button>
+        </FixedAction>
+      )}
     </section>
   );
 }
@@ -1798,6 +2133,7 @@ function SearchScreen({
   saved,
   savedCount,
   toggleSave,
+  openMoodboardGeneration,
   setScreen,
   pinterestResults,
   pinterestLoading,
@@ -1856,12 +2192,21 @@ function SearchScreen({
                   const isImporting = pinterestImportingId === pin.id;
                   return (
                     <article key={pin.id} className="pin-tile">
-                      <button className="pin-visual" onClick={() => usePinterestPin(pin)}>
-                        <div className="pin-media" style={pin.aspectRatio ? { aspectRatio: `${1 / pin.aspectRatio}` } : undefined}>
-                          <img src={pin.imageUrl} alt={pin.title} loading="lazy" />
-                        </div>
-                        <span className={`heart ${isSaved ? 'saved' : ''}`}>♥</span>
-                      </button>
+                      <div className="pin-visual">
+                        <button className="pin-media-button" onClick={() => usePinterestPin(pin)}>
+                          <div className="pin-media" style={pin.aspectRatio ? { aspectRatio: `${1 / pin.aspectRatio}` } : undefined}>
+                            <img src={pin.imageUrl} alt={pin.title} loading="lazy" />
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          className={`heart ${isSaved ? 'saved' : ''}`}
+                          onClick={() => toggleSave(pin)}
+                          aria-label={isSaved ? 'Remove from moodboard' : 'Save to moodboard'}
+                        >
+                          ♥
+                        </button>
+                      </div>
 
                       <div className="pin-copy">
                         <b>{pin.title}</b>
@@ -1889,7 +2234,7 @@ function SearchScreen({
       {savedCount > 0 && (
         <div className="saved-bar">
           <b>♥ {savedCount} saved to moodboard</b>
-          <button onClick={() => setScreen('upload')}>Use to generate →</button>
+          <button onClick={openMoodboardGeneration}>Use to generate →</button>
         </div>
       )}
     </section>
@@ -2036,7 +2381,7 @@ function ResultsScreen({
       <div className="swipe-copy">Swipe up & down to compare previews · {gallery + 1} / {resultItems.length}</div>
       <div className="results-actions">
         <button onClick={saveAllShots}>♥ Save all</button>
-        <button onClick={shareLook}>Share / book</button>
+        <button onClick={shareLook}>Share</button>
       </div>
     </section>
   );

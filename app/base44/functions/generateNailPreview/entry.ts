@@ -318,6 +318,7 @@ Deno.serve(async (req) => {
     const targetParts = await Promise.all(targetUploads.map((upload) => imagePartFromUpload(base44, upload)));
     const inspoPart = await imagePartFromUpload(base44, inspoUpload);
     const ai = new GoogleGenAI({ apiKey });
+    const generationId = crypto.randomUUID();
     const previews = [];
 
     for (const [targetIndex, targetPart] of targetParts.entries()) {
@@ -356,14 +357,27 @@ Deno.serve(async (req) => {
           const fileName = `nailed-${targetUpload.slot || "target"}-${attemptIndex + 1}-${imageIndex}.${extensionForMimeType(mimeType)}`;
           const stored = await uploadGeneratedPreview(cloudinary, bytes, mimeType, fileName);
 
-          previews.push({
-            id: `${targetUpload.id}-${attemptIndex + 1}-${imageIndex}`,
+          const previewPayload = {
+            userId: user.id,
+            userEmail: user.email,
+            generationId,
             targetSlot: targetUpload.slot || "hand",
             targetUploadId: targetUpload.id,
+            inspoUploadId: inspoUpload.id,
             attemptIndex: attemptIndex + 1,
             imageIndex,
+            model: MODEL,
+            fileName,
             mimeType,
+            sizeBytes: bytes.byteLength,
             ...stored,
+          };
+          const savedPreview = await base44.asServiceRole.entities.GeneratedPreview.create(previewPayload);
+
+          previews.push({
+            ...previewPayload,
+            ...savedPreview,
+            id: savedPreview.id,
           });
         }
       }

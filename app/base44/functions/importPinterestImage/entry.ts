@@ -10,8 +10,32 @@ type UploadRecord = {
   source?: string;
 };
 
+type CloudinaryConfig = {
+  cloudName: string;
+  apiKey: string;
+  apiSecret: string;
+};
+
 function response(body: Record<string, unknown>, status = 200) {
   return Response.json(body, { status });
+}
+
+function getCloudinaryConfig(): CloudinaryConfig {
+  const cloudinaryUrl = Deno.env.get("CLOUDINARY_URL");
+  if (!cloudinaryUrl) {
+    throw new Error("Cloudinary is not configured yet");
+  }
+
+  const parsed = new URL(cloudinaryUrl);
+  if (parsed.protocol !== "cloudinary:" || !parsed.hostname || !parsed.username || !parsed.password) {
+    throw new Error("Cloudinary URL is invalid");
+  }
+
+  return {
+    cloudName: parsed.hostname,
+    apiKey: decodeURIComponent(parsed.username),
+    apiSecret: decodeURIComponent(parsed.password),
+  };
 }
 
 function sanitizeFileName(value: string) {
@@ -20,6 +44,25 @@ function sanitizeFileName(value: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
+}
+
+function stableUserFolderPart(user: Record<string, unknown>) {
+  return sanitizeFileName(String(user.id || user.email || "user")).slice(0, 64);
+}
+
+async function sha1Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function createCloudinarySignature(params: Record<string, string>, apiSecret: string) {
+  const serialized = Object.entries(params)
+    .filter(([, value]) => value !== "")
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+
+  return sha1Hex(`${serialized}${apiSecret}`);
 }
 
 function inferExtension(contentType: string, imageUrl: string) {
@@ -34,6 +77,52 @@ function inferExtension(contentType: string, imageUrl: string) {
   if (pathname.endsWith(".webp")) return "webp";
   if (pathname.endsWith(".gif")) return "gif";
   return "jpg";
+}
+
+async function uploadPinterestImageToCloudinary({
+  bytes,
+  cloudinary,
+  contentType,
+  extension,
+  fileNameBase,
+  user,
+}: {
+  bytes: Uint8Array;
+  cloudinary: CloudinaryConfig;
+  contentType: string;
+  extension: string;
+  fileNameBase: string;
+  user: Record<string, unknown>;
+}) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const folder = `nailed/user-uploads/${stableUserFolderPart(user)}/inspiration`;
+  const publicId = `inspiration-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${fileNameBase}`;
+  const uploadParams = {
+    folder,
+    public_id: publicId,
+    timestamp,
+  };
+  const signature = await createCloudinarySignature(uploadParams, cloudinary.apiSecret);
+  const form = new FormData();
+
+  form.append("file", new Blob([bytes], { type: contentType }), `${fileNameBase}.${extension}`);
+  form.append("api_key", cloudinary.apiKey);
+  form.append("timestamp", timestamp);
+  form.append("signature", signature);
+  form.append("folder", folder);
+  form.append("public_id", publicId);
+
+  const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${cloudinary.cloudName}/image/upload`, {
+    method: "POST",
+    body: form,
+  });
+  const uploaded = await uploadResponse.json().catch(() => ({}));
+
+  if (!uploadResponse.ok) {
+    throw new Error(uploaded?.error?.message || "Could not upload Pinterest image");
+  }
+
+  return uploaded;
 }
 
 Deno.serve(async (req) => {
@@ -53,6 +142,13 @@ Deno.serve(async (req) => {
 
     if (!user) {
       return response({ error: "Unauthorized" }, 401);
+    }
+
+    let cloudinary: CloudinaryConfig;
+    try {
+      cloudinary = getCloudinaryConfig();
+    } catch (error) {
+      return response({ error: error instanceof Error ? error.message : "Cloudinary setup failed", setupRequired: true }, 501);
     }
 
     const body = await req.json().catch(() => ({}));
@@ -79,15 +175,27 @@ Deno.serve(async (req) => {
     const extension = inferExtension(contentType, imageUrl);
     const fileNameBase = sanitizeFileName(title) || "pinterest-inspiration";
     const bytes = new Uint8Array(await imageResponse.arrayBuffer());
-    const file = new File([bytes], `${fileNameBase}.${extension}`, { type: contentType });
+    const uploaded = await uploadPinterestImageToCloudinary({
+      bytes,
+      cloudinary,
+      contentType,
+      extension,
+      fileNameBase,
+      user,
+    });
 
-    const uploaded = await base44.integrations.Core.UploadPrivateFile({ file });
     const existing = (await base44.entities.UserUpload.filter({ slot: "inspiration" }, "-created_date", 1)) as UploadRecord[];
 
     const payload = {
       slot: "inspiration",
       source: "pinterest",
-      fileUri: uploaded.file_uri,
+      fileUri: "",
+      storageProvider: "cloudinary",
+      cloudinaryPublicId: uploaded.public_id,
+      cloudinarySecureUrl: uploaded.secure_url,
+      cloudinaryVersion: uploaded.version,
+      cloudinaryResourceType: uploaded.resource_type || "image",
+      cloudinaryFormat: uploaded.format || extension,
       fileName: title,
       contentType,
       sizeBytes: bytes.byteLength,
@@ -97,14 +205,9 @@ Deno.serve(async (req) => {
       ? await base44.entities.UserUpload.update(existing[0].id, payload)
       : await base44.entities.UserUpload.create(payload);
 
-    const signed = await base44.integrations.Core.CreateFileSignedUrl({
-      file_uri: uploaded.file_uri,
-      expires_in: 3600,
-    });
-
     return response({
       upload: record,
-      signedUrl: signed.signed_url,
+      signedUrl: uploaded.secure_url,
       pinUrl,
       imageUrl,
     });

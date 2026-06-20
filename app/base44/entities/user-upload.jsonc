@@ -44,6 +44,10 @@
     "sizeBytes": {
       "type": "number",
       "default": 0
+    },
+    "isEnabled": {
+      "type": "boolean",
+      "default": true
     }
   },
   "required": ["slot"],
