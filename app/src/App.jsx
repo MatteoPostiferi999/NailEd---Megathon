@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { base44, clearBase44Session, loginWithEmailPassword } from './api/base44Client';
+import { importPinterestImage, searchPinterest } from './api/pinterest';
 import landingManicure from './assets/landing-manicure.jpg';
 
 const PINK = '#C75C80';
@@ -176,6 +177,11 @@ function App() {
   const [query, setQuery] = useState('chrome');
   const [resultLabel, setResultLabel] = useState('chrome nails');
   const [saved, setSaved] = useState({});
+  const [pinterestResults, setPinterestResults] = useState([]);
+  const [pinterestLoading, setPinterestLoading] = useState(false);
+  const [pinterestError, setPinterestError] = useState('');
+  const [pinterestLastQuery, setPinterestLastQuery] = useState('');
+  const [pinterestImportingId, setPinterestImportingId] = useState('');
   const [selectedPkg, setSelectedPkg] = useState('triple');
   const [gallery, setGallery] = useState(0);
   const [generatedPreviews, setGeneratedPreviews] = useState([]);
@@ -383,6 +389,20 @@ function App() {
     setAuthOtp('');
     setPendingAuthEmail('');
   }, [authMode]);
+
+  useEffect(() => {
+    if (screen !== 'search' || pinterestLoading) return;
+
+    const initialQuery = String(resultLabel || query || '').trim();
+    if (!initialQuery) return;
+
+    if (pinterestLastQuery.toLowerCase() === initialQuery.toLowerCase() && (pinterestResults.length || pinterestError)) {
+      return;
+    }
+
+    void runPinterestSearch(initialQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen]);
 
   const showToast = (message) => {
     setToast(message);
@@ -628,12 +648,83 @@ function App() {
   };
 
   const toggleSave = (id) => {
+    const key = typeof id === 'object' && id?.id ? id.id : id;
     setSaved((value) => {
       const next = { ...value };
-      if (next[id]) delete next[id];
-      else next[id] = true;
+      if (next[key]) delete next[key];
+      else next[key] = typeof id === 'object' ? id : true;
       return next;
     });
+  };
+
+  const runPinterestSearch = async (nextQuery = query) => {
+    const trimmedQuery = String(nextQuery || '').trim();
+
+    if (!trimmedQuery) {
+      showToast('Type a Pinterest search first');
+      return;
+    }
+
+    setQuery(trimmedQuery);
+    setResultLabel(trimmedQuery);
+    setPinterestLoading(true);
+    setPinterestError('');
+
+    try {
+      const data = await searchPinterest(trimmedQuery, { limit: 18 });
+      const results = Array.isArray(data.results) ? data.results : [];
+      setPinterestResults(results);
+      setPinterestLastQuery(trimmedQuery);
+      setPinterestError(results.length ? '' : 'No Pinterest pins came back for that search.');
+    } catch (error) {
+      console.error('Pinterest search failed', error);
+      setPinterestResults([]);
+      setPinterestError(extractErrorMessage(error, 'Could not load Pinterest right now'));
+    } finally {
+      setPinterestLoading(false);
+    }
+  };
+
+  const usePinterestPin = async (pin) => {
+    if (!currentUser) {
+      setScreen('auth');
+      showToast('Log in to use Pinterest inspo');
+      return;
+    }
+
+    if (!pin?.imageUrl) {
+      showToast('This Pinterest image is missing');
+      return;
+    }
+
+    setPinterestImportingId(pin.id);
+
+    try {
+      const imported = await importPinterestImage(pin);
+      if (!imported?.upload || !imported?.signedUrl) {
+        throw new Error('Pinterest import did not return an image');
+      }
+
+      setInspLoaded((value) => {
+        revokeImageUpload(value);
+        return createStoredImageUpload(
+          {
+            ...imported.upload,
+            source: 'pinterest',
+            fileName: imported.upload.fileName || pin.title,
+          },
+          imported.signedUrl
+        );
+      });
+
+      showToast('Pinterest inspo added');
+      setScreen('inspiration');
+    } catch (error) {
+      console.error('Could not import Pinterest image', error);
+      showToast(extractErrorMessage(error, 'Could not use this Pinterest image'));
+    } finally {
+      setPinterestImportingId('');
+    }
   };
 
   const createWaitlistEntry = async (entryEmail, source = 'landing') => {
@@ -905,6 +996,10 @@ function App() {
     setResultLabel,
     saved,
     savedCount,
+    pinterestResults,
+    pinterestLoading,
+    pinterestError,
+    pinterestImportingId,
     selectedPkg,
     setSelectedPkg,
     gallery,
@@ -926,6 +1021,8 @@ function App() {
     joinWaitlist,
     startGeneration,
     toggleSave,
+    runPinterestSearch,
+    usePinterestPin,
     saveShot,
     startCreditCheckout,
     galleryPrev,
@@ -1477,28 +1574,24 @@ function InspirationScreen({ inspLoaded, saveInspoFile, savedCount, setScreen, s
   );
 }
 
-function SearchScreen({ query, setQuery, resultLabel, setResultLabel, saved, savedCount, toggleSave, setScreen }) {
-  const palettes = [
-    ['#FCE9EF', '#F3C9DA'],
-    ['#F3E8F7', '#DFC6EE'],
-    ['#FDEFE6', '#F6D2B8'],
-    ['#EFEFF8', '#CFD0EC'],
-    ['#FCEAE4', '#F4C4C0'],
-    ['#F0F3EA', '#D2DEC0'],
-  ];
-  const labels = ['glossy', 'matte', 'chrome', 'french', 'almond', 'short'];
-  const heights = [150, 110, 130, 170, 120, 140];
-  const tiles = palettes.map(([c1, c2], index) => ({
-    id: `p${index}`,
-    c1,
-    c2,
-    h: heights[index],
-    label: `${query} · ${labels[index]}`,
-  }));
-  const colA = [tiles[0], tiles[2], tiles[4]];
-  const colB = [tiles[1], tiles[3], tiles[5]];
-
-  const doSearch = () => setResultLabel(query || 'nails');
+function SearchScreen({
+  query,
+  setQuery,
+  resultLabel,
+  saved,
+  savedCount,
+  toggleSave,
+  setScreen,
+  pinterestResults,
+  pinterestLoading,
+  pinterestError,
+  pinterestImportingId,
+  runPinterestSearch,
+  usePinterestPin,
+}) {
+  const colA = pinterestResults.filter((_, index) => index % 2 === 0);
+  const colB = pinterestResults.filter((_, index) => index % 2 === 1);
+  const doSearch = () => runPinterestSearch(query || 'nails');
   const trends = ['Chrome', 'Glazed donut', 'French', 'Cat eye', 'Aura', 'Milky white'];
 
   return (
@@ -1521,7 +1614,7 @@ function SearchScreen({ query, setQuery, resultLabel, setResultLabel, saved, sav
               key={trend}
               onClick={() => {
                 setQuery(trend);
-                setResultLabel(trend);
+                void runPinterestSearch(trend);
               }}
             >
               {trend}
@@ -1534,23 +1627,47 @@ function SearchScreen({ query, setQuery, resultLabel, setResultLabel, saved, sav
           Pinterest results · "{resultLabel}"
         </div>
 
-        <div className="masonry">
-          {[colA, colB].map((col, colIndex) => (
-            <div key={colIndex}>
-              {col.map((tile) => {
-                const isSaved = Boolean(saved[tile.id]);
-                return (
-                  <button key={tile.id} className="pin-tile" onClick={() => toggleSave(tile.id)}>
-                    <Pattern c1={tile.c1} c2={tile.c2} style={{ height: tile.h }}>
-                      <span className={`heart ${isSaved ? 'saved' : ''}`}>♥</span>
-                      <em>{tile.label}</em>
-                    </Pattern>
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        {pinterestLoading && <div className="search-status">Loading Pinterest…</div>}
+        {!pinterestLoading && pinterestError && <div className="search-status search-status-error">{pinterestError}</div>}
+
+        {!pinterestLoading && !pinterestError && pinterestResults.length > 0 && (
+          <div className="masonry">
+            {[colA, colB].map((col, colIndex) => (
+              <div key={colIndex}>
+                {col.map((pin) => {
+                  const isSaved = Boolean(saved[pin.id]);
+                  const isImporting = pinterestImportingId === pin.id;
+                  return (
+                    <article key={pin.id} className="pin-tile">
+                      <button className="pin-visual" onClick={() => usePinterestPin(pin)}>
+                        <div className="pin-media" style={pin.aspectRatio ? { aspectRatio: `${1 / pin.aspectRatio}` } : undefined}>
+                          <img src={pin.imageUrl} alt={pin.title} loading="lazy" />
+                        </div>
+                        <span className={`heart ${isSaved ? 'saved' : ''}`}>♥</span>
+                      </button>
+
+                      <div className="pin-copy">
+                        <b>{pin.title}</b>
+                        <a href={pin.pinUrl} target="_blank" rel="noreferrer">
+                          Open pin
+                        </a>
+                      </div>
+
+                      <div className="pin-actions">
+                        <button className={isSaved ? 'active' : ''} onClick={() => toggleSave(pin)}>
+                          {isSaved ? 'Saved' : 'Save'}
+                        </button>
+                        <button onClick={() => usePinterestPin(pin)} disabled={isImporting}>
+                          {isImporting ? 'Adding…' : 'Use'}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {savedCount > 0 && (
         <div className="saved-bar">

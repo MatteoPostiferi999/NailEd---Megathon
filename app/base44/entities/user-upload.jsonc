@@ -8,7 +8,7 @@
     },
     "source": {
       "type": "string",
-      "enum": ["camera", "gallery"],
+      "enum": ["camera", "gallery", "pinterest"],
       "default": "gallery"
     },
     "fileUri": {

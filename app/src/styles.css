@@ -1527,6 +1527,21 @@ button:disabled {
   font-size: 12px;
 }
 
+.search-status {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid #eedde5;
+  color: #8c737e;
+  font-size: 13px;
+}
+
+.search-status-error {
+  color: #a34866;
+  background: #fff5f8;
+}
+
 .masonry {
   display: flex;
   gap: 10px;
@@ -1541,17 +1556,89 @@ button:disabled {
 }
 
 .pin-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 0;
   background: transparent;
-  cursor: pointer;
   text-align: left;
 }
 
-.pin-tile .pattern {
+.pin-visual {
+  position: relative;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pin-media {
   position: relative;
   border-radius: 16px;
   overflow: hidden;
   border: 1px solid #f2e2e8;
+  background: #f8edf2;
+  min-height: 120px;
+}
+
+.pin-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pin-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pin-copy b {
+  color: #3a2932;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pin-copy a {
+  color: #9b8189;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.pin-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pin-actions button {
+  flex: 1;
+  min-width: 0;
+  border-radius: 12px;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pin-actions button:first-child {
+  background: #fff;
+  border: 1px solid #eedde5;
+  color: #8c737e;
+}
+
+.pin-actions button:first-child.active {
+  background: #fce9ef;
+  color: #c75c80;
+}
+
+.pin-actions button:last-child {
+  background: #c75c80;
+  color: #fff;
+}
+
+.pin-actions button:disabled {
+  opacity: .7;
+  cursor: default;
 }
 
 .heart {
