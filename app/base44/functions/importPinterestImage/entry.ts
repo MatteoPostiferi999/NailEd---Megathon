@@ -1,5 +1,5 @@
 import { createClientFromRequest } from "npm:@base44/sdk";
-import { pinterestHeaders } from "../_shared/pinterest.ts";
+import { pinterestHeaders } from "./pinterest.ts";
 
 type UploadRecord = {
   id: string;

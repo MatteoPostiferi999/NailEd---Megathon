@@ -1,5 +1,5 @@
 import { createClientFromRequest } from "npm:@base44/sdk";
-import { getPinterestCookieHeader, parsePinterestSearchResults, pinterestHeaders } from "../_shared/pinterest.ts";
+import { getPinterestCookieHeader, parsePinterestSearchResults, pinterestHeaders } from "./pinterest.ts";
 
 function response(body: Record<string, unknown>, status = 200) {
   return Response.json(body, { status });
@@ -52,4 +52,3 @@ Deno.serve(async (req) => {
     return response({ error: error instanceof Error ? error.message : "Pinterest search failed" }, 500);
   }
 });
-

@@ -8,11 +8,11 @@ const PINK = '#C75C80';
 const MUTED = '#B79CA8';
 
 const greetings = [
-  ['hey bestie 💅', "let's get you nailed"],
-  ['yasss gorgeous ✨', 'time to serve looks'],
-  ['hi cutie 👋', 'your next mani awaits'],
-  ['well hello 💕', 'ready to slay those tips?'],
-  ['it girl alert 🚨', 'manifest the mani ✨'],
+  ['hey bestie', "let's get you nailed"],
+  ['yasss gorgeous', 'time to serve looks'],
+  ['hi cutie', 'your next mani awaits'],
+  ['well hello', 'ready to slay those tips?'],
+  ['it girl alert', 'manifest the mani'],
 ];
 
 const recent = [
