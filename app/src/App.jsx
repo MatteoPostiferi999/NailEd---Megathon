@@ -43,6 +43,13 @@ const pendingPromoCodeKey = 'nailed_pending_promo_code';
 const physicalOutreachPromoCode = 'irl';
 const maxImageUploadBytes = 50 * 1024 * 1024;
 const uploadSlots = ['hand', 'chest', 'face'];
+const imageExtensionByMimeType = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+};
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
 const waitlistJoinedKey = (email) => `nailed_waitlist_joined:${normalizeEmail(email)}`;
@@ -71,6 +78,95 @@ const getPromoCodeFromUrl = (url) => {
 
 const rememberPromoCode = (promoCode) => {
   if (promoCode) window.localStorage?.setItem(pendingPromoCodeKey, promoCode);
+};
+
+const normalizeImageMimeType = (value = '') => {
+  const mimeType = value.toLowerCase().split(';')[0].trim();
+  if (mimeType === 'image/jpg') return 'image/jpeg';
+  return imageExtensionByMimeType[mimeType] ? mimeType : '';
+};
+
+const imageExtensionFromUrl = (imageUrl = '') => {
+  try {
+    const { pathname } = new URL(imageUrl, window.location.href);
+    const match = pathname.match(/\.([a-z0-9]+)$/i);
+    const extension = match?.[1]?.toLowerCase();
+    if (extension === 'jpeg') return 'jpg';
+    if (['jpg', 'png', 'webp', 'gif', 'avif'].includes(extension)) return extension;
+  } catch {
+    return '';
+  }
+
+  return '';
+};
+
+const getResultImageUrl = (preview = {}) => preview.cloudinarySecureUrl || preview.secureUrl || preview.signedUrl || preview.imageUrl || '';
+
+const buildResultItems = (generatedPreviews) =>
+  generatedPreviews.length
+    ? generatedPreviews.map((preview, index) => ({
+        id: preview.id || `preview-${index}`,
+        imageUrl: getResultImageUrl(preview),
+        mimeType: preview.mimeType || preview.contentType || '',
+        format: preview.cloudinaryFormat || preview.format || '',
+        light: `AI preview ${index + 1}`,
+        angle: `${preview.targetSlot || 'hand'} · pass ${preview.attemptIndex || 1}`,
+        tag: 'Gemini',
+        c1: '#FCE9EF',
+        c2: '#F3C9DA',
+      }))
+    : shotDefs.map((shot, index) => ({
+        ...shot,
+        id: shot.light,
+        tag: 'Replica 100%',
+        fallbackIndex: index,
+      }));
+
+const resultFileExtension = (item) => {
+  const mimeType = normalizeImageMimeType(item?.mimeType);
+  if (mimeType) return imageExtensionByMimeType[mimeType];
+
+  const format = String(item?.format || '').toLowerCase();
+  if (format === 'jpeg') return 'jpg';
+  if (['jpg', 'png', 'webp', 'gif', 'avif'].includes(format)) return format;
+
+  return imageExtensionFromUrl(item?.imageUrl) || 'png';
+};
+
+const resultFileName = (item, index) => `nailed-preview-${index + 1}.${resultFileExtension(item)}`;
+
+const triggerBrowserDownload = (href, fileName, { openInNewTab = false } = {}) => {
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = fileName;
+
+  if (openInNewTab) {
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+  }
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+};
+
+const downloadResultImage = async (item, index) => {
+  const fileName = resultFileName(item, index);
+
+  try {
+    const response = await fetch(item.imageUrl, { mode: 'cors' });
+    if (!response.ok) throw new Error('Image download failed');
+
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    triggerBrowserDownload(blobUrl, fileName);
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    return 'downloaded';
+  } catch (error) {
+    console.warn('Falling back to opening image URL', error);
+    triggerBrowserDownload(item.imageUrl, fileName, { openInNewTab: true });
+    return 'opened';
+  }
 };
 
 const consumePendingPromoCode = (fallback = '') => {
@@ -205,9 +301,10 @@ function App() {
   const uploadsRef = useRef(uploads);
   const inspLoadedRef = useRef(inspLoaded);
   const greetIdx = useMemo(() => Math.floor(Math.random() * greetings.length), []);
+  const resultItems = useMemo(() => buildResultItems(generatedPreviews), [generatedPreviews]);
   const savedCount = Object.keys(saved).length;
   const showTabs = ['home', 'search', 'account'].includes(screen);
-  const resultCount = generatedPreviews.length || shotDefs.length;
+  const resultCount = resultItems.length;
 
   const applyUserCredits = (user) => {
     const nextCredits = normalizeCredits(user?.credits);
@@ -799,6 +896,65 @@ function App() {
     showToast(wasSaved ? 'Removed from gallery' : 'Image saved to gallery ♥');
   };
 
+  const saveAllShots = () => {
+    if (!resultItems.length) {
+      showToast('No previews to save yet');
+      return;
+    }
+
+    setSavedShots(Object.fromEntries(resultItems.map((_, index) => [index, true])));
+    showToast('All previews saved to gallery ♥');
+  };
+
+  const downloadShot = async (index = gallery) => {
+    const item = resultItems[index] || resultItems[gallery] || resultItems[0];
+
+    if (!item?.imageUrl) {
+      showToast('Generate a preview first');
+      return;
+    }
+
+    const result = await downloadResultImage(item, index);
+    showToast(result === 'opened' ? 'Opened image to save' : 'Preview downloaded');
+  };
+
+  const shareLook = async () => {
+    const item = resultItems[gallery] || resultItems[0];
+    const shareUrl = item?.imageUrl || window.location.href;
+    const shareData = {
+      title: 'My Nailed preview',
+      text: 'Check out this nail preview from Nailed.',
+      url: shareUrl,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        showToast('Shared your look');
+        return;
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('Share link copied');
+        return;
+      }
+
+      throw new Error('Share is not supported');
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+
+      console.error('Could not share look', error);
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard is not supported');
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('Share link copied');
+      } catch {
+        showToast('Could not share yet');
+      }
+    }
+  };
+
   const startCreditCheckout = async () => {
     if (!currentUser) {
       setScreen('auth');
@@ -1071,6 +1227,7 @@ function App() {
     gallery,
     setGallery,
     generatedPreviews,
+    resultItems,
     generationPending,
     waitlistPending,
     savedUploadsLoading,
@@ -1090,6 +1247,9 @@ function App() {
     runPinterestSearch,
     usePinterestPin,
     saveShot,
+    saveAllShots,
+    downloadShot,
+    shareLook,
     startCreditCheckout,
     galleryPrev,
     galleryNext,
@@ -1766,10 +1926,12 @@ function GeneratingScreen({ progress }) {
 function ResultsScreen({
   gallery,
   setGallery,
-  generatedPreviews,
+  resultItems,
   savedShots,
   saveShot,
-  showToast,
+  saveAllShots,
+  downloadShot,
+  shareLook,
   setScreen,
   startGeneration,
   galleryPrev,
@@ -1779,22 +1941,7 @@ function ResultsScreen({
   cancelDrag,
 }) {
   const resultsRef = useRef(null);
-  const resultItems = generatedPreviews.length
-    ? generatedPreviews.map((preview, index) => ({
-        id: preview.id || `preview-${index}`,
-        imageUrl: preview.cloudinarySecureUrl || preview.secureUrl || preview.signedUrl,
-        light: `AI preview ${index + 1}`,
-        angle: `${preview.targetSlot || 'hand'} · pass ${preview.attemptIndex || 1}`,
-        tag: 'Gemini',
-        c1: '#FCE9EF',
-        c2: '#F3C9DA',
-      }))
-    : shotDefs.map((shot, index) => ({
-        ...shot,
-        id: shot.light,
-        tag: 'Replica 100%',
-        fallbackIndex: index,
-      }));
+  const stopActionDrag = (event) => event.stopPropagation();
 
   useEffect(() => {
     const node = resultsRef.current;
@@ -1829,21 +1976,37 @@ function ResultsScreen({
             const isSaved = Boolean(savedShots[index]);
             const shotContent = (
               <>
-                <div className="result-tags">
-                  <span className="dark-tag">{shot.light}</span>
-                  <span className="light-tag">{shot.tag}</span>
-                </div>
-                <span className="angle-tag">{shot.angle}</span>
                 {shot.imageUrl ? (
                   <img className="result-image" src={shot.imageUrl} alt="" draggable="false" />
                 ) : (
                   <span className="mono-placeholder">[ {shot.ph} ]</span>
                 )}
                 <div className="shot-actions">
-                  <button className={isSaved ? 'saved' : ''} onClick={() => saveShot(index)}>
+                  <button
+                    className={isSaved ? 'saved' : ''}
+                    onMouseDown={stopActionDrag}
+                    onMouseUp={stopActionDrag}
+                    onTouchStart={stopActionDrag}
+                    onTouchEnd={stopActionDrag}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      saveShot(index);
+                    }}
+                    aria-label={isSaved ? 'Remove preview from gallery' : 'Save preview to gallery'}
+                  >
                     ♥
                   </button>
-                  <button onClick={() => showToast('Downloading to camera roll 📲')}>
+                  <button
+                    onMouseDown={stopActionDrag}
+                    onMouseUp={stopActionDrag}
+                    onTouchStart={stopActionDrag}
+                    onTouchEnd={stopActionDrag}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      downloadShot(index);
+                    }}
+                    aria-label="Download preview"
+                  >
                     <DownloadIcon />
                   </button>
                 </div>
@@ -1881,8 +2044,8 @@ function ResultsScreen({
 
       <div className="swipe-copy">Swipe up & down to compare previews · {gallery + 1} / {resultItems.length}</div>
       <div className="results-actions">
-        <button onClick={() => showToast('Saved to your gallery ♥')}>♥ Save all</button>
-        <button onClick={() => showToast('Sharing link copied 🔗')}>Share / book</button>
+        <button onClick={saveAllShots}>♥ Save all</button>
+        <button onClick={shareLook}>Share / book</button>
       </div>
     </section>
   );
