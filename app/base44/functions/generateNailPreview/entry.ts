@@ -2,7 +2,7 @@ import { createClientFromRequest } from "npm:@base44/sdk";
 import { GoogleGenAI } from "npm:@google/genai";
 
 const MODEL = "gemini-3.1-flash-image";
-const SIGNED_URL_TTL_SECONDS = 60 * 60;
+const CLOUDINARY_GENERATED_FOLDER = "nailed/generated-previews";
 
 const BASE_PROMPT = `Photo-editing task: virtual nail-art try-on.
 
@@ -42,10 +42,28 @@ const VARIATIONS = [
 type UploadRecord = {
   id: string;
   slot?: string;
+  storageProvider?: string;
+  storage_provider?: string;
   fileUri?: string;
   file_uri?: string;
+  cloudinaryPublicId?: string;
+  cloudinary_public_id?: string;
+  cloudinarySecureUrl?: string;
+  cloudinary_secure_url?: string;
+  cloudinaryVersion?: number;
+  cloudinary_version?: number;
+  cloudinaryResourceType?: string;
+  cloudinary_resource_type?: string;
+  cloudinaryFormat?: string;
+  cloudinary_format?: string;
   fileName?: string;
   contentType?: string;
+};
+
+type CloudinaryConfig = {
+  cloudName: string;
+  apiKey: string;
+  apiSecret: string;
 };
 
 function response(body: Record<string, unknown>, status = 200) {
@@ -70,6 +88,35 @@ function extensionForMimeType(mimeType: string) {
   return "png";
 }
 
+function getCloudinaryConfig(): CloudinaryConfig {
+  const cloudinaryUrl = Deno.env.get("CLOUDINARY_URL");
+  if (!cloudinaryUrl) {
+    throw new Error("Cloudinary is not configured yet");
+  }
+
+  const parsed = new URL(cloudinaryUrl);
+  if (parsed.protocol !== "cloudinary:" || !parsed.hostname || !parsed.username || !parsed.password) {
+    throw new Error("Cloudinary URL is invalid");
+  }
+
+  return {
+    cloudName: parsed.hostname,
+    apiKey: decodeURIComponent(parsed.username),
+    apiSecret: decodeURIComponent(parsed.password),
+  };
+}
+
+function sanitizePublicIdPart(value = "image") {
+  const [stem] = value.split(".");
+  const sanitized = stem
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+
+  return sanitized || "image";
+}
+
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   const chunkSize = 0x8000;
@@ -86,6 +133,21 @@ function base64ToBytes(base64: string) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+async function sha1Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function createCloudinarySignature(params: Record<string, string>, apiSecret: string) {
+  const serialized = Object.entries(params)
+    .filter(([, value]) => value !== "")
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+
+  return sha1Hex(`${serialized}${apiSecret}`);
 }
 
 function getInlineData(part: unknown): { data: string; mimeType?: string } | undefined {
@@ -124,9 +186,19 @@ async function signedUrlForUpload(base44: any, upload: UploadRecord) {
   return signed.signed_url as string;
 }
 
+function cloudinaryUrlForUpload(upload: UploadRecord) {
+  return upload.cloudinarySecureUrl || upload.cloudinary_secure_url || "";
+}
+
+async function imageUrlForUpload(base44: any, upload: UploadRecord) {
+  const cloudinaryUrl = cloudinaryUrlForUpload(upload);
+  if (cloudinaryUrl) return cloudinaryUrl;
+  return signedUrlForUpload(base44, upload);
+}
+
 async function imagePartFromUpload(base44: any, upload: UploadRecord) {
-  const signedUrl = await signedUrlForUpload(base44, upload);
-  const imageResponse = await fetch(signedUrl);
+  const imageUrl = await imageUrlForUpload(base44, upload);
+  const imageResponse = await fetch(imageUrl);
 
   if (!imageResponse.ok) {
     throw new Error(`Could not load ${upload.slot || "upload"} image`);
@@ -143,17 +215,42 @@ async function imagePartFromUpload(base44: any, upload: UploadRecord) {
   };
 }
 
-async function uploadGeneratedPreview(base44: any, bytes: Uint8Array, mimeType: string, name: string) {
-  const file = new File([bytes], name, { type: mimeType });
-  const uploaded = await base44.integrations.Core.UploadPrivateFile({ file });
-  const signed = await base44.integrations.Core.CreateFileSignedUrl({
-    file_uri: uploaded.file_uri,
-    expires_in: SIGNED_URL_TTL_SECONDS,
+async function uploadGeneratedPreview(cloudinary: CloudinaryConfig, bytes: Uint8Array, mimeType: string, name: string) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const publicId = `preview-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${sanitizePublicIdPart(name)}`;
+  const uploadParams = {
+    folder: CLOUDINARY_GENERATED_FOLDER,
+    public_id: publicId,
+    timestamp,
+  };
+  const signature = await createCloudinarySignature(uploadParams, cloudinary.apiSecret);
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: mimeType }), name);
+  form.append("api_key", cloudinary.apiKey);
+  form.append("timestamp", timestamp);
+  form.append("signature", signature);
+  form.append("folder", CLOUDINARY_GENERATED_FOLDER);
+  form.append("public_id", publicId);
+
+  const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${cloudinary.cloudName}/image/upload`, {
+    method: "POST",
+    body: form,
   });
+  const uploaded = await uploadResponse.json().catch(() => ({}));
+
+  if (!uploadResponse.ok) {
+    throw new Error(uploaded?.error?.message || "Could not upload generated preview");
+  }
 
   return {
-    fileUri: uploaded.file_uri,
-    signedUrl: signed.signed_url,
+    storageProvider: "cloudinary",
+    fileUri: "",
+    cloudinaryPublicId: uploaded.public_id,
+    cloudinarySecureUrl: uploaded.secure_url,
+    cloudinaryVersion: uploaded.version,
+    cloudinaryResourceType: uploaded.resource_type || "image",
+    cloudinaryFormat: uploaded.format || extensionForMimeType(mimeType),
+    signedUrl: uploaded.secure_url,
   };
 }
 
@@ -161,7 +258,7 @@ async function getOwnUpload(base44: any, id: string, allowedSlots: string[]) {
   const upload = (await base44.entities.UserUpload.get(id)) as UploadRecord;
   if (!upload?.id) throw new Error("Upload not found");
   if (!allowedSlots.includes(String(upload.slot))) throw new Error("Invalid upload slot");
-  if (!(upload.fileUri || upload.file_uri)) throw new Error("Upload has no saved file");
+  if (!(cloudinaryUrlForUpload(upload) || upload.fileUri || upload.file_uri)) throw new Error("Upload has no saved file");
   return upload;
 }
 
@@ -174,6 +271,13 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("GOOGLE_API_KEY");
     if (!apiKey) {
       return response({ error: "Gemini is not configured yet", setupRequired: true }, 501);
+    }
+
+    let cloudinary: CloudinaryConfig;
+    try {
+      cloudinary = getCloudinaryConfig();
+    } catch (error) {
+      return response({ error: error instanceof Error ? error.message : "Cloudinary setup failed", setupRequired: true }, 501);
     }
 
     const base44 = createClientFromRequest(req);
@@ -251,7 +355,7 @@ Deno.serve(async (req) => {
           const mimeType = normalizeMimeType(inline.mimeType);
           const bytes = base64ToBytes(inline.data);
           const fileName = `nailed-${targetUpload.slot || "target"}-${attemptIndex + 1}-${imageIndex}.${extensionForMimeType(mimeType)}`;
-          const stored = await uploadGeneratedPreview(base44, bytes, mimeType, fileName);
+          const stored = await uploadGeneratedPreview(cloudinary, bytes, mimeType, fileName);
 
           previews.push({
             id: `${targetUpload.id}-${attemptIndex + 1}-${imageIndex}`,
