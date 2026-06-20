@@ -21,13 +21,6 @@ const recent = [
   { t: 'Peach glaze', d: '6 angles', tag: 'Replica', c1: '#FDEFE6', c2: '#F6D2B8' },
 ];
 
-const galleryItems = [
-  { t: 'Coral chrome', tag: 'Replica', c1: '#FCE9EF', c2: '#F3C9DA' },
-  { t: 'Lilac french', tag: 'Concept', c1: '#F3E8F7', c2: '#DFC6EE' },
-  { t: 'Peach glaze', tag: 'Replica', c1: '#FDEFE6', c2: '#F6D2B8' },
-  { t: 'Cool milk', tag: 'Concept', c1: '#EFEFF8', c2: '#CFD0EC' },
-];
-
 const shotDefs = [
   { light: 'Natural light', angle: 'Front', ph: 'hand · render', c1: '#FCE9EF', c2: '#F3C9DA' },
   { light: 'Warm light', angle: '3/4 view', ph: 'hand · render', c1: '#FDEFE6', c2: '#F6D2B8' },
@@ -37,7 +30,6 @@ const shotDefs = [
   { light: 'Cool light', angle: 'Top down', ph: 'flat lay', c1: '#EFEFF8', c2: '#CFD0EC' },
 ];
 
-const menuItems = ['Subscription & billing', 'Payment methods', 'Notifications', 'Help & support'];
 const pendingWaitlistOptInKey = 'nailed_pending_waitlist_opt_in';
 const pendingPromoCodeKey = 'nailed_pending_promo_code';
 const physicalOutreachPromoCode = 'irl';
@@ -485,9 +477,11 @@ function App() {
     let current = 0;
     setProgress(0);
     const interval = window.setInterval(() => {
-      current = Math.min(92, current + 2 + Math.random() * 5);
+      const remaining = 94 - current;
+      const step = Math.max(0.35, remaining * 0.045);
+      current = Math.min(94, current + step);
       setProgress(current);
-    }, 220);
+    }, 320);
     return () => window.clearInterval(interval);
   }, [screen]);
 
@@ -2112,65 +2106,16 @@ function PaywallScreen({ selectedPkg, setSelectedPkg, startCreditCheckout, setSc
   );
 }
 
-function AccountScreen({ credits, savedCount, currentUser, handleLogout, setScreen }) {
-  const displayName = currentUser?.full_name || currentUser?.display_name || currentUser?.email?.split('@')[0] || 'Julia Rossi';
-  const displayEmail = currentUser?.email || 'julia@email.com';
-  const initial = (displayName || displayEmail || 'J').trim()[0]?.toUpperCase() || 'J';
-
+function AccountScreen() {
   return (
     <section className="screen scroll tabs-space">
       <div className="content-pad rise">
-        <div className="profile-head">
-          <div>{initial}</div>
-          <span>
-            <b>{displayName}</b>
-            <small>{displayEmail}</small>
-          </span>
-        </div>
-
-        <div className="stats-row">
-          <span>
-            <b>{credits}</b>
-            <small>Credits</small>
-          </span>
-          <span>
-            <b>{savedCount}</b>
-            <small>Saved</small>
-          </span>
-          <span>
-            <b>12</b>
-            <small>Try-ons</small>
-          </span>
-        </div>
-
-        <button className="pink-wide-button buy-button" onClick={() => setScreen('paywall')}>
-          + Buy more credits
-        </button>
-
-        <h2 className="gallery-title">My gallery</h2>
-        <div className="gallery-grid">
-          {galleryItems.map((item) => (
-            <button key={item.t} onClick={() => setScreen('results')}>
-              <Pattern c1={item.c1} c2={item.c2}>
-                <span>{item.tag}</span>
-              </Pattern>
-              <b>{item.t}</b>
-            </button>
-          ))}
-        </div>
-
         <div className="menu-card">
-          {menuItems.map((item) => (
-            <button key={item}>
-              <span>{item}</span>
-              <em>›</em>
-            </button>
-          ))}
+          <button type="button">
+            <span>Billing history</span>
+            <small>No charges yet</small>
+          </button>
         </div>
-
-        <button className="outline-pink-button logout" onClick={handleLogout}>
-          Log out
-        </button>
       </div>
     </section>
   );

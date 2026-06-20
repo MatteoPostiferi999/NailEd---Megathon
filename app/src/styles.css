@@ -2306,6 +2306,12 @@ button:disabled {
   cursor: pointer;
 }
 
+.menu-card button small {
+  color: #9b8189;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .menu-card button:last-child {
   border-bottom: 0;
 }
