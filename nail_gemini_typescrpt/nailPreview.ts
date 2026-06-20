@@ -88,7 +88,6 @@ a single photorealistic edited image.`;
 const VARIATIONS = [
   "EDIT PASS: conservative nail-only edit. Prioritize preserving the target photo exactly outside the nails.",
   "EDIT PASS: design-fidelity nail-only edit. Prioritize exact reference colors, art placement, and finish while preserving every non-nail detail.",
-  "EDIT PASS: natural-integration nail-only edit. Prioritize realistic nail lighting, reflections, and shadows while preserving the target photo.",
 ];
 
 function targetSize(
