@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { base44, clearBase44Session, loginWithEmailPassword } from './api/base44Client';
 import landingManicure from './assets/landing-manicure.jpg';
+import { defaultStripeCreditPackageId, stripeCreditPackages as packageDefs } from './data/stripeCreditPackages';
 
 const PINK = '#C75C80';
 const MUTED = '#B79CA8';
@@ -33,11 +34,6 @@ const shotDefs = [
   { light: 'Soft window', angle: 'On chest', ph: 'chest combo', c1: '#FCEAE4', c2: '#F4C4C0' },
   { light: 'Golden hour', angle: 'Near face', ph: 'face combo', c1: '#FAF0E2', c2: '#EBD6AE' },
   { light: 'Cool light', angle: 'Top down', ph: 'flat lay', c1: '#EFEFF8', c2: '#CFD0EC' },
-];
-
-const packageDefs = [
-  { id: 'single', credits: 1, price: '€1', per: '1 preview', icon: '🌸', iconBg: '#FCE9EF', popular: false },
-  { id: 'triple', credits: 3, price: '€5', per: '3 previews', icon: '💖', iconBg: '#F3E8F7', popular: true },
 ];
 
 const menuItems = ['Subscription & billing', 'Payment methods', 'Notifications', 'Help & support'];
@@ -95,20 +91,33 @@ const revokeImageUpload = (upload) => {
   if (upload?.url?.startsWith('blob:')) URL.revokeObjectURL(upload.url);
 };
 
-const normalizeUploadRecord = (record) => ({
+const normalizeUploadRecord = (record = {}) => ({
   ...record,
   fileUri: record.fileUri || record.file_uri,
+  storageProvider: record.storageProvider || record.storage_provider,
+  cloudinaryPublicId: record.cloudinaryPublicId || record.cloudinary_public_id,
+  cloudinarySecureUrl: record.cloudinarySecureUrl || record.cloudinary_secure_url,
+  cloudinaryVersion: record.cloudinaryVersion || record.cloudinary_version,
+  cloudinaryResourceType: record.cloudinaryResourceType || record.cloudinary_resource_type,
+  cloudinaryFormat: record.cloudinaryFormat || record.cloudinary_format,
   contentType: record.contentType || record.content_type,
 });
 
-const createStoredImageUpload = (record, signedUrl) => {
+const createStoredImageUpload = (record, fallbackUrl) => {
   const normalizedRecord = normalizeUploadRecord(record);
+  const imageUrl = normalizedRecord.cloudinarySecureUrl || fallbackUrl;
   return {
     id: normalizedRecord.id,
     source: normalizedRecord.source || 'gallery',
     name: normalizedRecord.fileName || normalizedRecord.name || 'Saved photo',
-    url: signedUrl,
+    url: imageUrl,
     fileUri: normalizedRecord.fileUri,
+    storageProvider: normalizedRecord.storageProvider,
+    cloudinaryPublicId: normalizedRecord.cloudinaryPublicId,
+    cloudinarySecureUrl: normalizedRecord.cloudinarySecureUrl,
+    cloudinaryVersion: normalizedRecord.cloudinaryVersion,
+    cloudinaryResourceType: normalizedRecord.cloudinaryResourceType,
+    cloudinaryFormat: normalizedRecord.cloudinaryFormat,
     status: 'saved',
     saved: true,
   };
@@ -176,7 +185,7 @@ function App() {
   const [query, setQuery] = useState('chrome');
   const [resultLabel, setResultLabel] = useState('chrome nails');
   const [saved, setSaved] = useState({});
-  const [selectedPkg, setSelectedPkg] = useState('triple');
+  const [selectedPkg, setSelectedPkg] = useState(defaultStripeCreditPackageId);
   const [gallery, setGallery] = useState(0);
   const [generatedPreviews, setGeneratedPreviews] = useState([]);
   const [toast, setToast] = useState('');
@@ -319,19 +328,23 @@ function App() {
 
         records.forEach((record) => {
           const normalizedRecord = normalizeUploadRecord(record);
-          if (!normalizedRecord.fileUri || latestBySlot[normalizedRecord.slot]) return;
+          if (!(normalizedRecord.cloudinarySecureUrl || normalizedRecord.fileUri) || latestBySlot[normalizedRecord.slot]) return;
           latestBySlot[normalizedRecord.slot] = normalizedRecord;
         });
 
-        const entries = await Promise.all(
+        const entries = (await Promise.all(
           Object.entries(latestBySlot).map(async ([slot, record]) => {
+            if (record.cloudinarySecureUrl) {
+              return [slot, createStoredImageUpload(record)];
+            }
+
             const { signed_url: signedUrl } = await base44.integrations.Core.CreateFileSignedUrl({
               file_uri: record.fileUri,
               expires_in: 3600,
             });
             return [slot, createStoredImageUpload(record, signedUrl)];
           })
-        );
+        )).filter(Boolean);
 
         if (cancelled) return;
 
@@ -749,12 +762,51 @@ function App() {
     return true;
   };
 
+  const uploadFileToCloudinary = async ({ slot, file }) => {
+    const signatureResponse = await base44.functions.invoke('createCloudinaryUploadSignature', {
+      slot,
+      fileName: file.name || slot,
+      contentType: file.type || 'image/jpeg',
+    });
+    const signatureData = signatureResponse?.data || signatureResponse;
+
+    if (!signatureData?.signature || !signatureData?.cloudName || !signatureData?.apiKey) {
+      throw new Error(signatureData?.error || 'Could not prepare Cloudinary upload');
+    }
+
+    const form = new FormData();
+    form.append('file', file);
+    form.append('api_key', signatureData.apiKey);
+    form.append('timestamp', String(signatureData.timestamp));
+    form.append('signature', signatureData.signature);
+    form.append('folder', signatureData.folder);
+    form.append('public_id', signatureData.publicId);
+
+    const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${signatureData.cloudName}/image/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    const uploaded = await uploadResponse.json().catch(() => ({}));
+
+    if (!uploadResponse.ok) {
+      throw new Error(uploaded?.error?.message || 'Cloudinary upload failed');
+    }
+
+    return uploaded;
+  };
+
   const persistUserUpload = async ({ slot, file, source, existingId }) => {
-    const { file_uri: fileUri } = await base44.integrations.Core.UploadPrivateFile({ file });
+    const uploaded = await uploadFileToCloudinary({ slot, file });
     const data = {
       slot,
       source,
-      fileUri,
+      fileUri: '',
+      storageProvider: 'cloudinary',
+      cloudinaryPublicId: uploaded.public_id,
+      cloudinarySecureUrl: uploaded.secure_url,
+      cloudinaryVersion: uploaded.version,
+      cloudinaryResourceType: uploaded.resource_type || 'image',
+      cloudinaryFormat: uploaded.format || '',
       fileName: file.name || (source === 'camera' ? 'Camera photo' : 'Gallery photo'),
       contentType: file.type || 'image/jpeg',
       sizeBytes: file.size || 0,
@@ -787,6 +839,7 @@ function App() {
         source,
         existingId: previousUpload?.id,
       });
+      const savedRecord = normalizeUploadRecord(record);
 
       setUploads((value) => {
         if (value[slot] !== pendingUpload) return value;
@@ -794,8 +847,14 @@ function App() {
           ...value,
           [slot]: {
             ...value[slot],
-            id: record.id,
-            fileUri: record.fileUri || record.file_uri,
+            id: savedRecord.id,
+            fileUri: savedRecord.fileUri,
+            storageProvider: savedRecord.storageProvider,
+            cloudinaryPublicId: savedRecord.cloudinaryPublicId,
+            cloudinarySecureUrl: savedRecord.cloudinarySecureUrl,
+            cloudinaryVersion: savedRecord.cloudinaryVersion,
+            cloudinaryResourceType: savedRecord.cloudinaryResourceType,
+            cloudinaryFormat: savedRecord.cloudinaryFormat,
             status: 'saved',
             saved: true,
           },
@@ -841,13 +900,20 @@ function App() {
         source,
         existingId: previousUpload?.id,
       });
+      const savedRecord = normalizeUploadRecord(record);
 
       setInspLoaded((value) => {
         if (value !== pendingUpload) return value;
         return {
           ...value,
-          id: record.id,
-          fileUri: record.fileUri || record.file_uri,
+          id: savedRecord.id,
+          fileUri: savedRecord.fileUri,
+          storageProvider: savedRecord.storageProvider,
+          cloudinaryPublicId: savedRecord.cloudinaryPublicId,
+          cloudinarySecureUrl: savedRecord.cloudinarySecureUrl,
+          cloudinaryVersion: savedRecord.cloudinaryVersion,
+          cloudinaryResourceType: savedRecord.cloudinaryResourceType,
+          cloudinaryFormat: savedRecord.cloudinaryFormat,
           status: 'saved',
           saved: true,
         };
@@ -1599,7 +1665,7 @@ function ResultsScreen({
   const resultItems = generatedPreviews.length
     ? generatedPreviews.map((preview, index) => ({
         id: preview.id || `preview-${index}`,
-        imageUrl: preview.signedUrl,
+        imageUrl: preview.cloudinarySecureUrl || preview.secureUrl || preview.signedUrl,
         light: `AI preview ${index + 1}`,
         angle: `${preview.targetSlot || 'hand'} · pass ${preview.attemptIndex || 1}`,
         tag: 'Gemini',

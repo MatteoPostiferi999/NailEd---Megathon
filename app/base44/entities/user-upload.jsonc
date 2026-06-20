@@ -14,6 +14,27 @@
     "fileUri": {
       "type": "string"
     },
+    "storageProvider": {
+      "type": "string",
+      "enum": ["base44", "cloudinary"],
+      "default": "cloudinary"
+    },
+    "cloudinaryPublicId": {
+      "type": "string"
+    },
+    "cloudinarySecureUrl": {
+      "type": "string"
+    },
+    "cloudinaryVersion": {
+      "type": "number"
+    },
+    "cloudinaryResourceType": {
+      "type": "string",
+      "default": "image"
+    },
+    "cloudinaryFormat": {
+      "type": "string"
+    },
     "fileName": {
       "type": "string"
     },
@@ -25,7 +46,7 @@
       "default": 0
     }
   },
-  "required": ["slot", "fileUri"],
+  "required": ["slot"],
   "rls": {
     "create": true,
     "read": {
