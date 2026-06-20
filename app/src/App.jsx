@@ -231,6 +231,34 @@ const resultFileExtension = (item) => {
 };
 
 const resultFileName = (item, index) => `nailed-preview-${index + 1}.${resultFileExtension(item)}`;
+const base44PromoText = 'edit with base44';
+
+const getDocumentRoots = () => {
+  const roots = [document];
+  document.querySelectorAll('*').forEach((element) => {
+    if (element.shadowRoot) roots.push(element.shadowRoot);
+  });
+  return roots;
+};
+
+const removeBase44PromoBanner = () => {
+  let removed = false;
+
+  getDocumentRoots().forEach((root) => {
+    root.querySelectorAll('*').forEach((element) => {
+      const text = element.textContent?.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!text || !text.includes(base44PromoText)) return;
+
+      const target = element.closest('button, a, [role="button"], div') || element;
+      if (!(target instanceof HTMLElement)) return;
+
+      target.remove();
+      removed = true;
+    });
+  });
+
+  return removed;
+};
 
 const cloudinaryAttachmentUrl = (imageUrl, fileName) => {
   try {
@@ -431,6 +459,30 @@ function App() {
   );
   const showTabs = ['home', 'search', 'account'].includes(screen);
   const resultCount = resultItems.length;
+
+  useEffect(() => {
+    const scrubBanner = () => {
+      removeBase44PromoBanner();
+    };
+
+    scrubBanner();
+
+    const observer = new MutationObserver(() => {
+      window.requestAnimationFrame(scrubBanner);
+    });
+
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+
+    const interval = window.setInterval(scrubBanner, 1200);
+
+    return () => {
+      observer.disconnect();
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const applyUserCredits = (user) => {
     const nextCredits = normalizeCredits(user?.credits);
