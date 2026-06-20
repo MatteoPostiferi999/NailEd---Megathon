@@ -109,9 +109,6 @@ const buildResultItems = (generatedPreviews) =>
         imageUrl: getResultImageUrl(preview),
         mimeType: preview.mimeType || preview.contentType || '',
         format: preview.cloudinaryFormat || preview.format || '',
-        light: `AI preview ${index + 1}`,
-        angle: `${preview.targetSlot || 'hand'} · pass ${preview.attemptIndex || 1}`,
-        tag: 'Gemini',
         c1: '#FCE9EF',
         c2: '#F3C9DA',
       }))

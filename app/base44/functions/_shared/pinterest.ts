@@ -1,8 +1,3 @@
-const DEFAULT_COOKIE_LOCATIONS = [
-  new URL("../../../../pinterest cache temp/cookies.txt", import.meta.url),
-  new URL("../../../pinterest cache temp/cookies.txt", import.meta.url),
-];
-
 const SEARCH_RESULT_SPLIT = /<div aria-label="Scheda Pin"/g;
 const HTML_ENTITY_MAP: Record<string, string> = {
   "&amp;": "&",
@@ -94,20 +89,6 @@ export function parsePinterestSearchResults(html: string, limit = 24) {
   return results;
 }
 
-async function readCookiesFile() {
-  const inlineCookies = Deno.env.get("PINTEREST_COOKIES_TXT");
-  if (inlineCookies?.trim()) return inlineCookies;
-
-  for (const url of DEFAULT_COOKIE_LOCATIONS) {
-    try {
-      return await Deno.readTextFile(url);
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return "";
-}
-
 function cookieDomainMatches(domain: string, host: string) {
   const normalized = domain.replace(/^\./, "").toLowerCase();
   return host === normalized || host.endsWith(`.${normalized}`);
@@ -117,7 +98,7 @@ export async function getPinterestCookieHeader(host = "www.pinterest.com") {
   const rawCookieHeader = Deno.env.get("PINTEREST_COOKIE_HEADER");
   if (rawCookieHeader?.trim()) return rawCookieHeader.trim();
 
-  const file = await readCookiesFile();
+  const file = Deno.env.get("PINTEREST_COOKIES_TXT") || "";
   if (!file) return "";
 
   const now = Math.floor(Date.now() / 1000);

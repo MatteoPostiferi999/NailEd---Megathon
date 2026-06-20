@@ -1854,44 +1854,6 @@ button:disabled {
   -webkit-user-select: none;
 }
 
-.result-tags {
-  position: absolute;
-  left: 14px;
-  top: 14px;
-  display: flex;
-  gap: 6px;
-  z-index: 2;
-}
-
-.dark-tag,
-.light-tag,
-.angle-tag {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 6px 11px;
-  border-radius: 12px;
-}
-
-.dark-tag {
-  background: rgba(58, 41, 50, .85);
-  color: #fff;
-}
-
-.light-tag,
-.angle-tag {
-  background: rgba(255, 255, 255, .9);
-  color: #c75c80;
-}
-
-.angle-tag {
-  position: absolute;
-  right: 14px;
-  top: 14px;
-  color: #8c737e;
-  padding: 6px 10px;
-  z-index: 2;
-}
-
 .shot-actions {
   position: absolute;
   right: 14px;
