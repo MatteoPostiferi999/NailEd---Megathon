@@ -1,0 +1,41 @@
+{
+  "name": "UserUpload",
+  "type": "object",
+  "properties": {
+    "slot": {
+      "type": "string",
+      "enum": ["hand", "chest", "face", "inspiration"]
+    },
+    "source": {
+      "type": "string",
+      "enum": ["camera", "gallery"],
+      "default": "gallery"
+    },
+    "fileUri": {
+      "type": "string"
+    },
+    "fileName": {
+      "type": "string"
+    },
+    "contentType": {
+      "type": "string"
+    },
+    "sizeBytes": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": ["slot", "fileUri"],
+  "rls": {
+    "create": true,
+    "read": {
+      "created_by": "{{user.email}}"
+    },
+    "update": {
+      "created_by": "{{user.email}}"
+    },
+    "delete": {
+      "created_by": "{{user.email}}"
+    }
+  }
+}

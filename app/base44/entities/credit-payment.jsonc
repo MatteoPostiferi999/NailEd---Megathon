@@ -1,0 +1,78 @@
+{
+  "name": "CreditPayment",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "string"
+    },
+    "userEmail": {
+      "type": "string",
+      "format": "email"
+    },
+    "packageId": {
+      "type": "string",
+      "enum": ["single", "triple"]
+    },
+    "credits": {
+      "type": "number",
+      "minimum": 1
+    },
+    "amountCents": {
+      "type": "number",
+      "minimum": 100
+    },
+    "currency": {
+      "type": "string",
+      "default": "eur"
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["stripe"],
+      "default": "stripe"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "paid", "cancelled", "failed"],
+      "default": "pending"
+    },
+    "stripeSessionId": {
+      "type": "string"
+    },
+    "stripePaymentIntentId": {
+      "type": "string"
+    },
+    "paidAt": {
+      "type": "string"
+    }
+  },
+  "required": ["userId", "userEmail", "packageId", "credits", "amountCents", "currency", "provider", "status"],
+  "rls": {
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": {
+      "$or": [
+        {
+          "userEmail": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

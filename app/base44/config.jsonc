@@ -1,0 +1,13 @@
+// Base44 Project Configuration
+{
+  "name": "nailed",
+  "description": "Mobile nail preview generation app backend",
+  "entitiesDir": "./entities",
+  "functionsDir": "./functions",
+  "agentsDir": "./agents",
+  "connectorsDir": "./connectors",
+  "authDir": "./auth",
+  "site": {
+    "outputDirectory": "./dist"
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "credits": {
+      "type": "number",
+      "default": 0,
+      "minimum": 0,
+      "rls": {
+        "write": {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      }
+    },
+    "credits_initialized": {
+      "type": "boolean",
+      "default": false,
+      "rls": {
+        "write": {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      }
+    },
+    "signup_source": {
+      "type": "string",
+      "enum": ["direct", "irl"],
+      "default": "direct",
+      "rls": {
+        "write": {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      }
+    },
+    "credits_promo_code": {
+      "type": "string",
+      "rls": {
+        "write": {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      }
+    },
+    "irl_promo_applied": {
+      "type": "boolean",
+      "default": false,
+      "rls": {
+        "write": {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      }
+    },
+    "credits_updated_at": {
+      "type": "string",
+      "rls": {
+        "write": {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      }
+    },
+    "waitlist_joined": {
+      "type": "boolean",
+      "default": false
+    },
+    "display_name": {
+      "type": "string"
+    }
+  }
+}

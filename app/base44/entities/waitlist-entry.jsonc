@@ -1,0 +1,42 @@
+{
+  "name": "WaitlistEntry",
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "source": {
+      "type": "string",
+      "default": "landing"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["joined", "duplicate", "invalid"],
+      "default": "joined"
+    },
+    "freeTryOnsReserved": {
+      "type": "number",
+      "default": 10
+    }
+  },
+  "required": ["email"],
+  "rls": {
+    "create": true,
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
