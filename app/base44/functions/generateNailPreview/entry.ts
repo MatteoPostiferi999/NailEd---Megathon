@@ -41,6 +41,14 @@ const VARIATIONS = [
 type UploadRecord = {
   id: string;
   slot?: string;
+  userId?: string;
+  user_id?: string;
+  userEmail?: string;
+  user_email?: string;
+  created_by?: string;
+  createdBy?: string;
+  created_by_id?: string;
+  createdById?: string;
   storageProvider?: string;
   storage_provider?: string;
   fileUri?: string;
@@ -72,6 +80,24 @@ function response(body: Record<string, unknown>, status = 200) {
 function normalizeCredits(value: unknown) {
   const credits = Number(value);
   return Number.isFinite(credits) && credits > 0 ? Math.floor(credits) : 0;
+}
+
+function normalizeId(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeEmail(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function uploadOwnerMatches(upload: UploadRecord, user: Record<string, unknown>) {
+  const userId = normalizeId(user.id);
+  const userEmail = normalizeEmail(user.email);
+  const uploadUserId = normalizeId(upload.userId || upload.user_id || upload.created_by_id || upload.createdById);
+  const uploadUserEmail = normalizeEmail(upload.userEmail || upload.user_email || upload.created_by || upload.createdBy);
+
+  if (!uploadUserId && !uploadUserEmail) return true;
+  return Boolean((userId && uploadUserId === userId) || (userEmail && uploadUserEmail === userEmail));
 }
 
 function normalizeMimeType(value?: string | null) {
@@ -253,9 +279,10 @@ async function uploadGeneratedPreview(cloudinary: CloudinaryConfig, bytes: Uint8
   };
 }
 
-async function getOwnUpload(base44: any, id: string, allowedSlots: string[]) {
+async function getOwnUpload(base44: any, user: Record<string, unknown>, id: string, allowedSlots: string[]) {
   const upload = (await base44.entities.UserUpload.get(id)) as UploadRecord;
   if (!upload?.id) throw new Error("Upload not found");
+  if (!uploadOwnerMatches(upload, user)) throw new Error("Upload not found");
   if (!allowedSlots.includes(String(upload.slot))) throw new Error("Invalid upload slot");
   if (!(cloudinaryUrlForUpload(upload) || upload.fileUri || upload.file_uri)) throw new Error("Upload has no saved file");
   return upload;
@@ -312,9 +339,9 @@ Deno.serve(async (req) => {
     }
 
     const targetUploads = await Promise.all(
-      targetUploadIds.map((id) => getOwnUpload(base44, id, ["hand", "chest", "face"])),
+      targetUploadIds.map((id) => getOwnUpload(base44, user, id, ["hand", "chest", "face"])),
     );
-    const inspoUpload = await getOwnUpload(base44, inspoUploadId, ["inspiration"]);
+    const inspoUpload = await getOwnUpload(base44, user, inspoUploadId, ["inspiration"]);
     const targetParts = await Promise.all(targetUploads.map((upload) => imagePartFromUpload(base44, upload)));
     const inspoPart = await imagePartFromUpload(base44, inspoUpload);
     const ai = new GoogleGenAI({ apiKey });

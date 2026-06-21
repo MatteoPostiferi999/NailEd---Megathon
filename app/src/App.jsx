@@ -46,6 +46,7 @@ const imageExtensionByMimeType = {
 };
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
+const normalizeId = (value = '') => String(value || '').trim();
 const waitlistJoinedKey = (email) => `nailed_waitlist_joined:${normalizeEmail(email)}`;
 const isTruthyParam = (value) => ['1', 'true', 'yes'].includes((value || '').toLowerCase());
 const shouldOpenSignupFromUrl = (url) => {
@@ -117,6 +118,8 @@ const getResultImageUrl = (preview = {}) =>
 
 const normalizeGeneratedPreviewRecord = (record = {}) => ({
   ...record,
+  userId: record.userId || record.user_id,
+  userEmail: record.userEmail || record.user_email,
   generationId: record.generationId || record.generation_id || record.id,
   targetUploadId: record.targetUploadId || record.target_upload_id,
   targetSlot: record.targetSlot || record.target_slot || 'hand',
@@ -133,6 +136,45 @@ const normalizeGeneratedPreviewRecord = (record = {}) => ({
   sizeBytes: record.sizeBytes || record.size_bytes || 0,
   createdDate: record.created_date || record.createdAt || record.created_at || new Date().toISOString(),
 });
+
+const isGeneratedPreviewOwnedByUser = (record = {}, user = {}) => {
+  const preview = normalizeGeneratedPreviewRecord(record);
+  const userId = normalizeId(user?.id);
+  const userEmail = normalizeEmail(user?.email || '');
+  const previewUserId = normalizeId(preview.userId);
+  const previewUserEmail = normalizeEmail(preview.userEmail || '');
+
+  return Boolean((userId && previewUserId === userId) || (userEmail && previewUserEmail === userEmail));
+};
+
+const filterGeneratedPreviewsForUser = (records = [], user = {}) =>
+  records.filter((record) => isGeneratedPreviewOwnedByUser(record, user));
+
+const loadGeneratedPreviewRecordsForUser = async (user) => {
+  const userId = normalizeId(user?.id);
+  const userEmail = normalizeEmail(user?.email || '');
+
+  try {
+    const response = await base44.functions.invoke('listGeneratedPreviews', { limit: 90 });
+    const data = response?.data || response;
+    if (Array.isArray(data?.previews)) {
+      return filterGeneratedPreviewsForUser(data.previews, user);
+    }
+  } catch (error) {
+    console.warn('Could not load generated previews through function', error);
+  }
+
+  const records = [];
+  if (userId) {
+    records.push(...(await base44.entities.GeneratedPreview.filter({ userId }, '-created_date', 90)));
+  }
+
+  if (!records.length && userEmail) {
+    records.push(...(await base44.entities.GeneratedPreview.filter({ userEmail }, '-created_date', 90)));
+  }
+
+  return filterGeneratedPreviewsForUser(records, user);
+};
 
 const sortGeneratedPreviews = (left, right) => {
   const slotOrder = { hand: 0, chest: 1, face: 2 };
@@ -231,7 +273,30 @@ const resultFileExtension = (item) => {
 };
 
 const resultFileName = (item, index) => `nailed-preview-${index + 1}.${resultFileExtension(item)}`;
-const base44PromoText = 'edit with base44';
+const base44PromoSelectors = [
+  '#base44-edit-badge',
+  '#base44-modal-overlay',
+  '[id*="base44-edit-badge"]',
+  '[id*="base44-badge"]',
+  '[class*="base44-edit-badge"]',
+  '[class*="base44-badge"]',
+];
+const base44PromoTextPatterns = ['edit with', 'built with base44', 'turn ideas into working apps with base44'];
+const base44BadgeEnabledClass = 'base44-badge-enabled';
+
+const isBase44BadgeEnabled = () => {
+  try {
+    return new URLSearchParams(window.location.search).get('base') === '1';
+  } catch {
+    return false;
+  }
+};
+
+const syncBase44BadgePreference = () => {
+  const enabled = isBase44BadgeEnabled();
+  document.documentElement.classList.toggle(base44BadgeEnabledClass, enabled);
+  return enabled;
+};
 
 const getDocumentRoots = () => {
   const roots = [document];
@@ -242,18 +307,39 @@ const getDocumentRoots = () => {
 };
 
 const removeBase44PromoBanner = () => {
+  if (syncBase44BadgePreference()) return false;
+
   let removed = false;
 
+  const removeElement = (element) => {
+    if (!(element instanceof HTMLElement)) return;
+    element.remove();
+    removed = true;
+  };
+
   getDocumentRoots().forEach((root) => {
-    root.querySelectorAll('*').forEach((element) => {
-      const text = element.textContent?.replace(/\s+/g, ' ').trim().toLowerCase();
-      if (!text || !text.includes(base44PromoText)) return;
+    base44PromoSelectors.forEach((selector) => {
+      root.querySelectorAll(selector).forEach(removeElement);
+    });
 
-      const target = element.closest('button, a, [role="button"], div') || element;
-      if (!(target instanceof HTMLElement)) return;
+    root.querySelectorAll('button, a, [role="button"], div').forEach((element) => {
+      const text = element.textContent?.replace(/\s+/g, ' ').trim().toLowerCase() || '';
+      const aria = element.getAttribute('aria-label')?.toLowerCase() || '';
+      const href = element.getAttribute('href')?.toLowerCase() || '';
+      const id = element.id?.toLowerCase() || '';
+      const className = element.getAttribute('class')?.toLowerCase() || '';
 
-      target.remove();
-      removed = true;
+      const hasPromoText = base44PromoTextPatterns.some((pattern) => text.includes(pattern));
+      const hasBadgeMarker =
+        id.includes('base44-edit-badge') ||
+        id.includes('base44-badge') ||
+        className.includes('base44-edit-badge') ||
+        className.includes('base44-badge');
+      const pointsToBase44 = href.includes('base44.com') || aria.includes('base44');
+
+      if (!hasBadgeMarker && !hasPromoText && !pointsToBase44) return;
+
+      removeElement(element.closest('#base44-edit-badge, #base44-modal-overlay, button, a, [role="button"], div') || element);
     });
   });
 
@@ -462,7 +548,9 @@ function App() {
 
   useEffect(() => {
     const scrubBanner = () => {
-      removeBase44PromoBanner();
+      if (!syncBase44BadgePreference()) {
+        removeBase44PromoBanner();
+      }
     };
 
     scrubBanner();
@@ -676,7 +764,7 @@ function App() {
     const loadRecentTryOns = async () => {
       setRecentTryOnsLoading(true);
       try {
-        const records = await base44.entities.GeneratedPreview.filter({}, '-created_date', 90);
+        const records = await loadGeneratedPreviewRecordsForUser(currentUser);
         if (!cancelled) setRecentTryOns(groupGeneratedPreviews(records));
       } catch (error) {
         console.warn('Could not load generated previews', error);
@@ -2022,6 +2110,17 @@ function GalleryIcon() {
   );
 }
 
+function PinterestLogo() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12.017 0C5.396 0 .029 5.367 .029 11.987c0 5.079 3.158 9.417 7.618 11.162-.105-.949-.199-2.403 .041-3.439 .219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663 .967-2.911 2.168-2.911 1.024 0 1.518 .769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193 .6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033 .394 2.143 .889 2.743 .097 .118 .112 .219 .085 .338-.09 .375-.293 1.199-.334 1.363-.053 .225-.172 .271-.402 .165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.357-.629-2.746-1.378l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123 .345 2.306 .535 3.55 .535 6.607 0 11.985-5.365 11.985-11.987C23.971 5.367 18.592 .001 12.017 .001Z"
+      />
+    </svg>
+  );
+}
+
 function XIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2051,6 +2150,7 @@ function InspirationScreen({
   startGeneration,
 }) {
   const [showMoodboard, setShowMoodboard] = useState(false);
+  const galleryInputRef = useRef(null);
   const hasMoodboardPins = savedMoodboardPins.length > 0;
   const handleFile = (event, source) => {
     const file = event.target.files?.[0];
@@ -2075,64 +2175,19 @@ function InspirationScreen({
           Drop a photo of the nails you're obsessed with — we'll recreate them <b>exactly</b> on you 💅
         </p>
 
-        <div className={`inspo-drop ${inspLoaded ? 'done' : ''}`}>
-          {inspLoaded ? (
-            <>
-              <img src={inspLoaded.url} alt="" />
-              <div className={`big-check ${inspLoaded.status === 'error' ? 'error' : ''}`}>
-                {inspLoaded.status === 'saving' ? '...' : inspLoaded.status === 'error' ? '!' : '✓'}
-              </div>
-              <b>Inspo added</b>
-              <span>
-                {inspLoaded.name}
-                {inspLoaded.status === 'saving' ? ' · saving' : inspLoaded.status === 'error' ? ' · retry upload' : ' · saved'}
-              </span>
-            </>
-          ) : (
-            <>
-              <div className="add-box">＋</div>
-              <b>Upload a nail photo</b>
-              <span>Camera roll · screenshot · fresh photo</span>
-            </>
-          )}
-          <span className="inspo-actions">
-            <label className="upload-action text-action" title="Camera">
-              <CameraIcon />
-              <span>Camera</span>
-              <input
-                className="file-input"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(event) => handleFile(event, 'camera')}
-              />
-            </label>
-            <label className="upload-action text-action" title="Gallery">
-              <GalleryIcon />
-              <span>Gallery</span>
-              <input
-                className="file-input"
-                type="file"
-                accept="image/*"
-                onChange={(event) => handleFile(event, 'gallery')}
-              />
-            </label>
-          </span>
-        </div>
-
-        <Divider>or pick a saved one</Divider>
-
         <button
-          className={`moodboard-row ${showMoodboard ? 'active' : ''}`}
+          className={`moodboard-row pinterest-row ${showMoodboard ? 'active' : ''}`}
           onClick={() => {
             if (hasMoodboardPins) setShowMoodboard((value) => !value);
             else setScreen('search');
           }}
         >
-          <span>♥</span>
+          <span className="pinterest-mark">
+            <PinterestLogo />
+          </span>
           <span>
-            <b>From your moodboard</b>
-            <small>{savedCount} saved ideas</small>
+            <b>From Pinterest</b>
+            <small>{savedCount ? `${savedCount} saved ideas ready` : 'Search and save your nail inspo'}</small>
           </span>
           <em>{showMoodboard ? '⌃' : '›'}</em>
         </button>
@@ -2166,6 +2221,71 @@ function InspirationScreen({
             </div>
           </div>
         )}
+
+        <Divider>or upload your own</Divider>
+
+        <div
+          className={`inspo-drop ${inspLoaded ? 'done' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => galleryInputRef.current?.click()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              galleryInputRef.current?.click();
+            }
+          }}
+        >
+          <input
+            ref={galleryInputRef}
+            className="file-input"
+            type="file"
+            accept="image/*"
+            onChange={(event) => handleFile(event, 'gallery')}
+          />
+          {inspLoaded ? (
+            <>
+              <img src={inspLoaded.url} alt="" />
+              <div className={`big-check ${inspLoaded.status === 'error' ? 'error' : ''}`}>
+                {inspLoaded.status === 'saving' ? '...' : inspLoaded.status === 'error' ? '!' : '✓'}
+              </div>
+              <b>Inspo added</b>
+              <span>
+                {inspLoaded.name}
+                {inspLoaded.status === 'saving' ? ' · saving' : inspLoaded.status === 'error' ? ' · retry upload' : ' · saved'}
+              </span>
+            </>
+          ) : (
+            <>
+              <div className="add-box">＋</div>
+              <b>Upload a nail photo</b>
+              <span>Camera roll · screenshot · fresh photo</span>
+            </>
+          )}
+          <span className="inspo-actions" onClick={(event) => event.stopPropagation()}>
+            <label className="upload-action text-action" title="Camera">
+              <CameraIcon />
+              <span>Camera</span>
+              <input
+                className="file-input"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => handleFile(event, 'camera')}
+              />
+            </label>
+            <label className="upload-action text-action" title="Gallery">
+              <GalleryIcon />
+              <span>Gallery</span>
+              <input
+                className="file-input"
+                type="file"
+                accept="image/*"
+                onChange={(event) => handleFile(event, 'gallery')}
+              />
+            </label>
+          </span>
+        </div>
       </div>
       {!showMoodboard && (
         <FixedAction>
@@ -2503,16 +2623,54 @@ function PaywallScreen({ selectedPkg, setSelectedPkg, startCreditCheckout, setSc
   );
 }
 
-function AccountScreen() {
+function AccountScreen({ currentUser, recentTryOns, recentTryOnsLoading, openRecentTryOn, setScreen, handleLogout }) {
   return (
-    <section className="screen scroll tabs-space">
+    <section className="screen scroll tabs-space account-screen">
       <div className="content-pad rise">
+        <div className="account-head">
+          <span className="profile-avatar">{(currentUser?.display_name || currentUser?.email || 'N').charAt(0).toUpperCase()}</span>
+          <div>
+            <h2>My try-ons</h2>
+            <p>{currentUser?.email || 'Saved gallery'}</p>
+          </div>
+        </div>
+
+        <div className="section-title-row account-title-row">
+          <h2>Saved gallery</h2>
+          {recentTryOns.length > 0 && <small>{recentTryOns.length} saved</small>}
+        </div>
+
+        {recentTryOnsLoading ? (
+          <div className="recent-empty">Loading saved try-ons...</div>
+        ) : recentTryOns.length ? (
+          <div className="tryon-gallery-grid">
+            {recentTryOns.map((item) => (
+              <button key={item.id} className="recent-card tryon-gallery-card" onClick={() => openRecentTryOn(item)}>
+                <span className="recent-thumb">
+                  <img src={item.coverUrl} alt="" />
+                  <em>{item.subtitle}</em>
+                </span>
+                <b>{item.title}</b>
+                <small>{item.dateLabel}</small>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button className="recent-empty recent-empty-action" onClick={() => setScreen('upload')}>
+            No saved try-ons yet. Create your first one.
+          </button>
+        )}
+
         <div className="menu-card">
           <button type="button">
             <span>Billing history</span>
             <small>No charges yet</small>
           </button>
         </div>
+
+        <button className="outline-pink-button logout" onClick={handleLogout}>
+          Log out
+        </button>
       </div>
     </section>
   );
